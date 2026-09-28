@@ -23,11 +23,14 @@ output/
 <case>/
 ├── network.json            # 规范网络数据，供自研求解器读取
 ├── network.dss             # 同一网络的 OpenDSS 表示
+├── network_topology.png    # 由生成器绘制的拓扑图：节点、DER 与支路信息
 ├── load_profiles.csv       # 逐负荷 P/Q 时序
 └── der_profiles/           # 每台 DER 一份时序和控制器配置
 ```
 
 `network.json` 是固定网络的规范输入，包含母线、支路、三相阻抗矩阵、设备类型、接入节点、额定参数和 DER profile 相对路径。`network.dss` 是 OpenDSS 后端的兼容文件，由同一个算例生成器创建。
+
+每次运行生成器还会生成 `network_topology.png`。图中方形黄色节点为平衡源，蓝色圆形节点为带基础负荷的节点；彩色菱形分别表示 PV、风机、BESS 和 EV，支路旁标注支路 ID 与长度。图仅由 `network.json` 的内容绘制，可用于检查生成数据的拓扑和设备接入是否符合预期。
 
 ## 生成和运行
 

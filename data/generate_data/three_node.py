@@ -7,10 +7,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from topology_plot import plot_network_topology
+
 ROOT = Path(__file__).resolve().parents[2]
 CASE_DIR = ROOT / "data" / "three_node"
 HOURS = list(range(24))
 Z_MATRIX = [[[0.40, 0.30], [0.05, 0.10], [0.05, 0.10]], [[0.05, 0.10], [0.40, 0.30], [0.05, 0.10]], [[0.05, 0.10], [0.05, 0.10], [0.40, 0.30]]]
+TOPOLOGY_POSITIONS = {"source": (0, 0), "bus1": (2, 0), "bus2": (4, 0), "bus3": (6, 0)}
 
 
 def network() -> dict:
@@ -40,8 +43,10 @@ def dss_text() -> str:
 def main() -> None:
     profiles = CASE_DIR / "der_profiles"
     CASE_DIR.mkdir(parents=True, exist_ok=True); profiles.mkdir(exist_ok=True)
-    (CASE_DIR / "network.json").write_text(json.dumps(network(), indent=2), encoding="utf-8")
+    case_network = network()
+    (CASE_DIR / "network.json").write_text(json.dumps(case_network, indent=2), encoding="utf-8")
     (CASE_DIR / "network.dss").write_text(dss_text(), encoding="utf-8")
+    plot_network_topology(case_network, CASE_DIR / "network_topology.png", TOPOLOGY_POSITIONS)
     shape = [0.62, 0.58, 0.55, 0.53, 0.55, 0.62, 0.72, 0.82, 0.88, 0.91, 0.93, 0.95, 0.96, 0.97, 0.99, 1.02, 1.07, 1.12, 1.18, 1.22, 1.18, 1.08, 0.90, 0.74]
     rows = []
     for hour in HOURS:

@@ -11,11 +11,18 @@ from pathlib import Path
 
 import pandas as pd
 
+from topology_plot import plot_network_topology
+
 ROOT = Path(__file__).resolve().parents[2]
 CASE_DIR = ROOT / "data" / "radial_12bus"
 HOURS = list(range(24))
 EDGES = [("source", "b1", 0.20), ("b1", "b2", 0.18), ("b2", "b3", 0.16), ("b3", "b4", 0.14), ("b2", "b5", 0.17), ("b5", "b6", 0.12), ("b5", "b7", 0.15), ("b1", "b8", 0.19), ("b8", "b9", 0.13), ("b9", "b10", 0.12), ("b8", "b11", 0.15), ("b11", "b12", 0.12)]
 Z_MATRIX = [[[0.16, 0.12], [0.02, 0.04], [0.02, 0.04]], [[0.02, 0.04], [0.16, 0.12], [0.02, 0.04]], [[0.02, 0.04], [0.02, 0.04], [0.16, 0.12]]]
+TOPOLOGY_POSITIONS = {
+    "source": (0, 0), "b1": (1, 0), "b2": (2, 0), "b3": (3, 1), "b4": (4, 1),
+    "b5": (3, -1), "b6": (4, -1.6), "b7": (4, -0.5), "b8": (2, -3), "b9": (3, -3.6),
+    "b10": (4, -3.6), "b11": (3, -2.4), "b12": (4, -2.4),
+}
 
 
 def network() -> dict:
@@ -41,8 +48,10 @@ def dss_text() -> str:
 def main() -> None:
     profiles = CASE_DIR / "der_profiles"
     CASE_DIR.mkdir(parents=True, exist_ok=True); profiles.mkdir(exist_ok=True)
-    (CASE_DIR / "network.json").write_text(json.dumps(network(), indent=2), encoding="utf-8")
+    case_network = network()
+    (CASE_DIR / "network.json").write_text(json.dumps(case_network, indent=2), encoding="utf-8")
     (CASE_DIR / "network.dss").write_text(dss_text(), encoding="utf-8")
+    plot_network_topology(case_network, CASE_DIR / "network_topology.png", TOPOLOGY_POSITIONS)
     shape = [0.55, 0.52, 0.50, 0.49, 0.50, 0.57, 0.68, 0.79, 0.87, 0.92, 0.96, 0.98, 1.0, 1.01, 1.03, 1.06, 1.10, 1.15, 1.20, 1.22, 1.16, 1.04, 0.84, 0.68]
     rows = []
     for hour in HOURS:
