@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
