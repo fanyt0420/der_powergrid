@@ -1,23 +1,18 @@
 Clear
 Set DefaultBaseFrequency=60
-! Generated 12.47-kV three-phase unbalanced feeder for the multi-DER QSTS demo.
-New Circuit.MultiDERDemo basekv=12.47 pu=1.0 phases=3 bus1=source
+New Circuit.ThreeNodeDemo basekv=12.47 pu=1.0 phases=3 bus1=source
 New LineCode.MAIN nphases=3 BaseFreq=60 units=km
 ~ rmatrix=[0.40 | 0.05 0.40 | 0.05 0.05 0.40]
 ~ xmatrix=[0.30 | 0.10 0.30 | 0.10 0.10 0.30]
-~ cmatrix=[3.0 | 0.0 3.0 | 0.0 0.0 3.0]
 New Line.L1 phases=3 bus1=source.1.2.3 bus2=bus1.1.2.3 linecode=MAIN length=1.0 units=km
 New Line.L2 phases=3 bus1=bus1.1.2.3 bus2=bus2.1.2.3 linecode=MAIN length=1.2 units=km
 New Line.L3 phases=3 bus1=bus2.1.2.3 bus2=bus3.1.2.3 linecode=MAIN length=0.8 units=km
-! Load operating P/Q is supplied only by load_profiles.csv.
 New Load.Load1 phases=3 bus1=bus1.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0
 New Load.Load2 phases=3 bus1=bus2.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0
 New Load.Load3 phases=3 bus1=bus3.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0
-! DER elements are driven independently by files in der_profiles/.
 New Generator.PV1 phases=3 bus1=bus1.1.2.3 kV=12.47 kW=0 kvar=0 model=1
 New Generator.Wind1 phases=3 bus1=bus2.1.2.3 kV=12.47 kW=0 kvar=0 model=1
-New Storage.BESS1 phases=3 bus1=bus2.1.2.3 kV=12.47 kWrated=100 kWhrated=200
-~ %stored=50 %reserve=20 %EffCharge=95 %EffDischarge=95 kW=0 kvar=0 dispmode=DEFAULT
+New Storage.BESS1 phases=3 bus1=bus2.1.2.3 kV=12.47 kWrated=100 kWhrated=200 %stored=50 %reserve=20 %EffCharge=95 %EffDischarge=95 kW=0 kvar=0 dispmode=DEFAULT
 New Load.EV1 phases=3 bus1=bus3.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0
 Set VoltageBases=[12.47]
 CalcVoltageBases

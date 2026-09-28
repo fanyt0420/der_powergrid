@@ -1,194 +1,275 @@
-# OpenDSS QSTS Multi-DER Demo
+# OpenDSS DER QSTS 框架
 
-Python 与 DSS-Python/OpenDSS 构建的 24 小时 QSTS 演示。场景包含三段三相径向馈线、三个逐节点 P/Q 负荷，以及 PV、风电、储能、EV。输入数据和仿真分为独立两步。
+本项目支持多个独立算例。网络拓扑、负荷、DER 设备、DER 时序和输出均按算例目录组织；`run.py` 不默认任何特定网络规模、节点名称或 DER 数量。
 
-## 运行
-
-```powershell
-pip install -r requirements.txt
-python generate_data.py
-python run.py
-```
-
-`generate_data.py` 生成并覆盖 `data/`；`run.py` 只读取这些数据，执行 `hour=0` 到 `hour=23` 的 QSTS。可使用独立目录：
-
-```powershell
-python generate_data.py --data-dir data\case_a
-python run.py --data-dir data\case_a --output output\case_a
-```
-
-## 数据
+## 算例目录
 
 ```text
 data/
-├── feeder.dss
-├── load_profiles.csv
-└── der_profiles/
-    ├── pv1.csv
-    ├── wind1.csv
-    ├── bess1.csv
-    └── ev1.csv
+├── generate_data/
+│   ├── three_node.py       # 3 节点示例数据生成器
+│   └── radial_12bus.py     # 12 节点、多支路、多 DER 合成馈线数据生成器
+├── three_node/             # three_node.py 的生成结果
+└── radial_12bus/           # radial_12bus.py 的生成结果
+
+output/
+├── three_node/
+└── radial_12bus/
 ```
 
-`feeder.dss` 只定义静态网络与设备：12.47 kV 源端、`source → bus1 → bus2 → bus3` 三段三相线路、各元件的接入位置/相别/额定参数。基础负荷的初始 P/Q 为零，所有运行 P/Q 均来自时序文件。
+每个算例目录均包含：
 
-`load_profiles.csv` 是逐负荷长表；每一时刻必须有 `Load1`、`Load2`、`Load3` 各一行：
+```text
+<case>/
+├── network.json            # 规范网络数据，供自研求解器读取
+├── network.dss             # 同一网络的 OpenDSS 表示
+├── load_profiles.csv       # 逐负荷 P/Q 时序
+└── der_profiles/           # 每台 DER 一份时序和控制器配置
+```
+
+`network.json` 是固定网络的规范输入，包含母线、支路、三相阻抗矩阵、设备类型、接入节点、额定参数和 DER profile 相对路径。`network.dss` 是 OpenDSS 后端的兼容文件，由同一个算例生成器创建。
+
+## 生成和运行
+
+安装依赖：
+
+```powershell
+pip install -r requirements.txt
+```
+
+生成并运行三节点算例：
+
+```powershell
+python data\generate_data\three_node.py
+python run.py --data-dir data\three_node
+```
+
+生成并运行更复杂的多支路算例：
+
+```powershell
+python data\generate_data\radial_12bus.py
+python run.py --data-dir data\radial_12bus
+```
+
+默认结果写入 `output/<算例目录名>/`。如需指定位置：
+
+```powershell
+python run.py --data-dir data\radial_12bus --output output\experiment_a
+```
+
+`radial_12bus` 是合成的三相 12 节点径向多支路馈线，而非 IEEE 123 节点基准。它包含 12 个基础负荷、12 条支路、2 台 PV、1 台风机、1 台 BESS 和 1 个 EV，用于验证当前通用数据接口和多 DER QSTS 能否处理复杂于三节点的拓扑。
+
+## 网络与时序接口
+
+负荷 profile 是长表。每一个时刻必须包含 `network.json` 中所有 `kind="load"` 设备各一行：
 
 ```csv
 hour,load_name,p_kw,q_kvar
 0,Load1,270.630,90.210
 0,Load2,217.124,70.246
-0,Load3,174.840,58.280
 ```
 
-每台 DER 有单独 profile，且每一行必须包含 `controller_type`：
+每台 DER 的 `profile_file` 由 `network.json` 内设备定义指定；因此 `run.py` 会自动发现并创建 PV、Wind、BESS、EV 模型，不再写死 `PV1`、`bus1` 或三个负荷。
 
-| 文件 | 设备/节点 | 必需列 | 控制器 |
-| --- | --- | --- | --- |
-| `pv1.csv` | `Generator.PV1` / bus1 | `hour,pv_kw,controller_type` | `volt_var` |
-| `wind1.csv` | `Generator.Wind1` / bus2 | `hour,wind_kw,controller_type` | `constant_pq` |
-| `bess1.csv` | `Storage.BESS1` / bus2 | `hour,bess_kw,controller_type` | `soc_schedule` |
-| `ev1.csv` | `Load.EV1` / bus3 | `hour,ev_kw,controller_type` | `constant_pq` |
+所有 DER profile 必须包含 `hour` 和 `controller_type`。当前支持：
 
-可选无功列为对应的 `*_kvar`。PV 的 `volt_var` 还使用 `q_limit_kvar`、`v_ref_pu`、`droop_kvar_per_pu`。功率单位为 kW/kvar。
+| 控制器 | 行为 |
+| --- | --- |
+| `constant_pq` | 直接采用该时刻 profile 的 P/Q |
+| `volt_var` | 固定 profile P，按接入母线电压迭代调整 Q |
+| `soc_schedule` | 采用计划 BESS P/Q，但按 SOC 边界裁剪实际 P |
 
-## DER 模块
+## 求解器接口
 
-### 统一接口与职责
+公共接口位于 `src/power_flow.py`：
 
-所有 DER 均继承 `src/der_model.py` 中的 `DERModel`。QSTS 不需要识别某个具体 DER 的内部逻辑，只对每台已注册设备执行同一组操作：读取该时刻注入、写入 OpenDSS、执行控制更新、推进状态。
+| 类型 | 职责 |
+| --- | --- |
+| `NetworkModel` | 固定网络数据，从 `network.json` 读取 |
+| `OperatingPoint` | 某时刻全部负荷复功率与 DER 命令 |
+| `DERCommand` | 单台 DER 的 P/Q、控制器类型和参数 |
+| `PFState` | 上一时刻复电压初值与求解器状态 |
+| `PFResult` | 电压、线路结果、系统汇总、迭代次数、下一状态 |
+| `SolverContext` | 时间步、控制迭代编号、上一轮结果、未来联立方程入口 |
+
+```python
+class PowerFlowSolver(Protocol):
+    def build(self, network: NetworkModel) -> None: ...
+
+    def solve(
+        self,
+        operating_point: OperatingPoint,
+        state: PFState | None,
+        context: SolverContext | None = None,
+    ) -> PFResult: ...
+```
+
+当前后端为 `src/solvers/opendss_solver.py` 中的 `OpenDSSSolver`。未来在 `src/solvers/custom_pf_solver.py` 实现 `CustomPFSolver` 后，只需在运行入口替换求解器实例；QSTS、DER 控制器和数据格式无需修改。
+
+## QSTS、控制和状态传递
+
+每小时执行：
+
+```text
+读取当前逐负荷 P/Q 与各 DER profile
+→ 构造 OperatingPoint
+→ PowerFlowSolver.solve(OperatingPoint, PFState)
+→ 按 PFResult 电压更新 Volt-VAR 控制器
+→ P/Q 改变则再次 solve，直到外层控制收敛
+→ BESS 推进 SOC，PFResult.next_state 传给下一时刻
+```
+
+PV Volt-VAR 使用：
+
+```text
+Q = clip[k × (Vref − Vbus), −Qmax, Qmax]
+```
+
+BESS 的 SOC 为跨时段显式状态；其容量、初始 SOC、SOC 下限和效率从 `network.json` 的 BESS 设备定义读取。PV、Wind、EV 是无状态 profile 回放模型。`PFState` 已传递给下一时刻，为自研求解器提供电压 warm start 接口。
+
+## 输出
+
+每个算例输出目录包含：
+
+- `qsts_bus_voltages.csv`：每时刻、每母线相别的电压幅值和相角；
+- `qsts_system.csv`：总负荷、外层控制迭代次数、潮流内部迭代次数、电压范围、损耗、源端功率、最终 DER P/Q 和 BESS SOC。
+
+## DER 模块详解
+
+### 统一 DER 接口
+
+所有 DER 均继承 `src/der_model.py` 中的 `DERModel`。QSTS 不针对 PV、风机、储能或 EV 写类型判断；它只在每个时刻向模型请求注入命令、根据潮流结果更新控制器，并在收敛后推进状态。
 
 ```python
 class DERModel:
     def _validate_profile(self) -> None:
-        """检查时序字段和 controller_type。"""
+        """校验设备时序和 controller_type。"""
 
     def get_injection(self, time_step: int) -> dict[str, object]:
-        """返回该时刻的计划 P/Q、控制器类型和控制参数。"""
+        """返回计划 P/Q、控制器类型和参数。"""
 
-    def apply_to_opendss(self, dss_interface, injection: dict[str, object]) -> None:
-        """将当前 P/Q 命令写入相应 OpenDSS 元件。"""
+    def to_command(self, injection: dict[str, object]) -> DERCommand:
+        """将模型数据转为求解器无关的 DERCommand。"""
 
-    def control_step(self, dss_interface, injection: dict[str, object]) -> dict[str, object]:
-        """根据已求得的网络状态更新控制器命令。"""
+    def control_step(self, pf_result: PFResult, injection: dict[str, object]) -> dict[str, object]:
+        """根据当前潮流结果更新当前时刻控制命令。"""
 
     def advance_state(self, injection: dict[str, object], dt_hours: float) -> None:
-        """将本时刻状态推进为下一时刻状态。"""
+        """将本时刻状态传递到下一时刻。"""
 ```
 
-其中 `get_injection()` 和 `control_step()` 处理同一时刻的代数关系；`advance_state()` 专门处理时刻之间的状态传递。
+`get_injection()`、`to_command()` 和 `control_step()` 处理同一时刻的代数关系；`advance_state()` 只在当前时刻收敛后调用，用于跨时段物理状态。
 
-### 当前 DER 设备
+### 当前 DER 类型
 
-| 模型 | OpenDSS 对象 | 节点 | 计划数据 | 控制方式 | 是否跨时段存状态 |
-| --- | --- | --- | --- | --- | --- |
-| `PVModel` | `Generator.PV1` | bus1 | `pv_kw,pv_kvar` | Volt-VAR | 否 |
-| `WindModel` | `Generator.Wind1` | bus2 | `wind_kw,wind_kvar` | 恒 P/Q | 否 |
-| `BESSModel` | `Storage.BESS1` | bus2 | `bess_kw,bess_kvar` | SOC 约束的计划功率 | 是，SOC |
-| `EVModel` | `Load.EV1` | bus3 | `ev_kw,ev_kvar` | 恒 P/Q 充电负荷 | 否 |
+| 模型 | OpenDSS 元件 | P 的符号 | 控制类型 | 跨时段状态 |
+| --- | --- | --- | --- | --- |
+| `PVModel` | `Generator` | 正值为发电 | `volt_var` 或 `constant_pq` | 无 |
+| `WindModel` | `Generator` | 正值为发电 | `constant_pq` | 无 |
+| `BESSModel` | `Storage` | 正值放电、负值充电 | `soc_schedule` | SOC |
+| `EVModel` | `Load` | 正值为充电负荷 | `constant_pq` | 无 |
 
-PV、Wind 的正 P 为发电；BESS 的正 P 为放电、负 P 为充电；EV 的正 P 为消费功率。`PVModel`、`WindModel` 写入 `Generator`，`EVModel` 写入 `Load`，`BESSModel` 根据 P 的正负切换 `Storage` 的 `Discharging`、`Charging` 或 `Idling` 状态。
+DER 设备的名称、种类、接入母线、额定功率、储能容量和 profile 文件均由 `network.json` 的 `devices` 读取。例如：
 
-### DER profile 规范
+```json
+{
+  "id": "BESS1",
+  "kind": "bess",
+  "bus": "b6",
+  "p_rated_kw": 80,
+  "energy_kwh": 500,
+  "reserve_soc": 20,
+  "initial_soc": 55,
+  "profile_file": "der_profiles/bess1.csv"
+}
+```
 
-每台设备一份 CSV，每行对应一个仿真时刻；`hour` 和 `controller_type` 是所有 DER 的必需列。
+这也是 `run.py` 不再写死特定 DER 或节点名称的原因。
+
+### DER profile 示例
+
+PV 的 Volt-VAR profile：
 
 ```csv
 hour,pv_kw,pv_kvar,controller_type,q_limit_kvar,v_ref_pu,droop_kvar_per_pu
-12,400,0,volt_var,100,1.0,1000
+12,180,0,volt_var,45,1.0,540
 ```
 
-`controller_type` 当前可取：
+BESS 的计划功率 profile：
 
-| 类型 | 数据要求 | 指令含义 |
-| --- | --- | --- |
-| `constant_pq` | 计划 P/Q | 直接使用 profile 的 P/Q |
-| `volt_var` | 计划 P、`q_limit_kvar`、`v_ref_pu`、`droop_kvar_per_pu` | P 按 profile；Q 由接入母线电压决定 |
-| `soc_schedule` | 计划 BESS P/Q | P 先按 SOC 可用能量裁剪，再写入 Storage |
+```csv
+hour,bess_kw,bess_kvar,controller_type
+10,-45,0,soc_schedule
+18,35,0,soc_schedule
+```
 
-如果 profile 没有对应小时，当前模型回退到零 P/Q。正式研究中应保证每台设备的时刻完整且唯一；当前代码仅显式拒绝不支持的控制器类型，并由 `run.py` 检查四份必需 profile 文件是否存在。
+`controller_type` 必须逐时给出，因此后续可在同一台设备的不同运行时段切换控制方式。当前实现支持 `constant_pq`、`volt_var` 和 `soc_schedule`；不支持的类型会在 profile 读取时明确报错。
 
-### PV Volt-VAR 控制
+### PV Volt-VAR 方程
 
-PV 的 `control_step()` 在每次 OpenDSS 潮流后读取 bus1 三相电压标幺值的平均值 `Vbus`，并计算：
+PV 在潮流求解后读取其接入母线所有相别的平均标幺电压 \(V_{bus}\)，并计算：
 
 \[
 Q_{PV}=\operatorname{clip}\left[k(V_{ref}-V_{bus}),-Q_{max},Q_{max}\right]
 \]
 
-低电压时 (Q_{PV}>0)，PV 注入无功；高电压时 (Q_{PV}<0)，PV 吸收无功。新 Q 与上一轮命令存在差异时，QSTS 将其重新写入 OpenDSS 并再次求解。当前 profile 中 `Qmax=100` kvar、`Vref=1.0` p.u.、`k=1000` kvar/p.u.
+低电压时注入正无功，高电压时吸收无功。若新 Q 与上一轮不同，QSTS 将生成新 `DERCommand` 并再次调用同一求解器。这个控制器是代数、无状态的：下一时刻重新由该时刻电压计算。
 
-### BESS 能量状态与功率边界
+### BESS SOC 状态方程
 
-BESS 的初始 SOC 为 50%，容量 200 kWh，SOC 下限 20%，充/放电效率均为 95%。其计划功率来自 profile，但实际注入先受能量边界限制：当继续放电将低于 20% SOC，或继续充电将超过 100% SOC 时，`BESSModel` 自动削减该时刻 P。
-
-在控制迭代收敛后，以实际 P 更新状态：
+BESS 在写入求解器前先根据当前 SOC 约束其计划功率，保证不会突破最小 SOC 或 100% SOC。收敛后，以最终实际功率更新：
 
 \[
-SOC_{t+1}=SOC_t-
-\frac{P_{t}\Delta t}{\eta_{dis}E}\times100,\quad P_t>0
+SOC_{t+1}=SOC_t-\frac{P_t\Delta t}{\eta_{dis}E}\times100,\quad P_t>0
 \]
 
 \[
-SOC_{t+1}=SOC_t+
-\frac{|P_{t}|\eta_{ch}\Delta t}{E}\times100,\quad P_t<0
+SOC_{t+1}=SOC_t+\frac{|P_t|\eta_{ch}\Delta t}{E}\times100,\quad P_t<0
 \]
 
-其中当前 \(\Delta t=1\) 小时。下一时刻调用 `get_injection()` 时会读取这个更新后的 SOC，而不是从 profile 重置它。
+其中 \(E\)、SOC 下限、初始 SOC 和效率从该 BESS 的网络设备定义读取，\(\Delta t\) 当前为 1 小时。`qsts_system.csv` 的 `<bess_name>_soc_pct` 是每个时刻末、将传给下一时刻的 SOC。
 
-### 添加新的 DER 或控制器
+## QSTS 求解过程详解
 
-新增设备应同时完成以下工作：
-
-1. 在 `generate_data.py` 中定义相应 OpenDSS 元件及其接入节点。
-2. 生成该设备独立的 profile CSV，包含每时刻的 `controller_type`。
-3. 继承 `DERModel`，实现 profile 校验、注入写入与需要的控制/状态逻辑。
-4. 在 `run.py` 中实例化模型，并传入与 feeder 一致的 `bus_name`。
-5. 如为新控制器，在 `DERModel.SUPPORTED_CONTROLLERS` 中登记类型，并在模型的 `control_step()` 中实现控制方程。
-
-这样，QSTS 主循环不需要为新设备增加类型判断。
-
-## QSTS 与控制器耦合
-
-每个时刻依次：
+对每一个 `hour`，QSTS 的实际顺序为：
 
 ```text
-逐负荷 P/Q + DER 计划 P/Q
-        ↓
-OpenDSS 潮流求解
-        ↓
-更新电压相关控制器（当前为 PV Volt-VAR）
-        ↓
-若 P/Q 改变则再次调用 OpenDSS，直至控制收敛
-        ↓
-推进 DER 状态并记录结果
+1. 从 load_profiles.csv 读取所有基础负荷的 P/Q
+2. 从各 DER profile 读取计划 P/Q、controller_type 与控制参数
+3. 构造 OperatingPoint，并携带上一时刻 PFState 调用求解器
+4. 获取 PFResult：节点复电压、线路结果、系统汇总
+5. 调用每台 DER 的 control_step(PFResult, ...)
+6. 若任一 DER 的 P/Q 改变，重新构造 OperatingPoint 并再次求解
+7. 当 P/Q 不再改变时，推进 BESS 等跨时段状态
+8. 保存电压、最终 DER 命令、SOC、损耗和迭代信息
 ```
 
-这是一种外层固定点迭代：网络方程由 OpenDSS 求解，控制方程由 Python 根据已求得母线电压更新，再调用 OpenDSS。PV 控制式为：
+对于网络方程，求解器在给定负荷和 DER 注入时求解三相非线性潮流：
 
-```text
-Q = clip[droop_kvar_per_pu × (v_ref_pu − Vbus), −q_limit_kvar, q_limit_kvar]
-```
+\[
+\frac{S_i^*}{V_i^*}=\sum_jY_{ij}V_j
+\]
 
-它不是把控制方程直接塞入 OpenDSS 的内部方程，但会迭代到 DER P/Q 不再改变；每时刻最多 20 次控制更新。
+当前 `OpenDSSSolver` 用 OpenDSS 完成该方程组求解。PV Volt-VAR 控制方程不直接嵌入 OpenDSS 的内部牛顿迭代，而通过“潮流 → 控制器 → 潮流”的外层固定点迭代与电网方程耦合。`control_iterations` 记录外层控制更新次数，`pf_iterations` 记录 OpenDSS 单次潮流的内部迭代次数。
 
-跨时段状态由 `advance_state()` 传递。当前 PV、Wind、EV 是无状态 profile 回放；BESS 在每个收敛时刻后根据实际充/放电功率、200 kWh 容量、95% 效率与 20% SOC 下限更新 SOC。下一时刻的 BESS 计划功率会受该 SOC 约束。
+## 状态传递详解
 
-## 输出
+当前有两类时序状态：
 
-`output/` 包含：
+| 状态 | 保存位置 | 从 \(t\) 到 \(t+1\) 的传递方式 |
+| --- | --- | --- |
+| 节点复电压 | `PFResult.next_state.voltage_guess` | QSTS 作为下一时刻 `PFState` 传入求解器，供自研算法 warm start；当前 OpenDSS 后端保持已编译电路状态。 |
+| BESS SOC | `BESSModel` 内部状态 | 在时刻收敛后通过 `advance_state()` 更新；下一时刻限制可用充放电功率。 |
 
-- `qsts_bus_voltages.csv`：每时刻、每个节点的电压标幺值与相角；
-- `qsts_system.csv`：总基础负荷 P/Q、控制迭代次数、收敛状态、电压范围、损耗、源端功率、每台 DER 的最终 P/Q 与 BESS 期末 SOC。
+基础负荷、PV、Wind、EV 的计划 P/Q 不由上一时刻传递，而是由各自 profile 在每个时刻覆盖更新。PV Volt-VAR 的 Q 也是该时刻独立求得；BESS SOC 是当前唯一显式的跨时段设备物理状态。
 
-## 代码
+## 新增算例、新 DER 与自研求解器
 
-```text
-generate_data.py          # 生成网络、负荷与 DER 时序
-run.py                    # 注册 DER 并运行 QSTS
-src/der_model.py          # DER 模型、控制器类型、BESS 状态方程
-src/opendss_model.py      # OpenDSS 交互、控制迭代与状态汇总
-src/qsts.py               # 逐时 QSTS 调度
-```
+新增算例的基本步骤：
 
-当前 BESS 控制是计划功率加 SOC 安全约束，尚未实现价格优化、MPC、Volt-Watt 或多 DER 协同控制。
+1. 在 `data/generate_data/` 新建生成脚本。
+2. 在 `data/<case_name>/` 生成 `network.json`、`network.dss`、`load_profiles.csv` 和 `der_profiles/`。
+3. 设备定义中提供 `kind`、`bus`、额定参数和 `profile_file`。
+4. 使用 `python run.py --data-dir data/<case_name>` 验证。
+
+新增 DER 类型时，继承 `DERModel`，在 `DERModel.SUPPORTED_CONTROLLERS` 登记控制器类型，并实现 profile 校验、注入、控制方程和状态更新。新增自研求解器时，在 `src/solvers/custom_pf_solver.py` 实现 `build()` 与 `solve()`，读取相同的 `NetworkModel`、`OperatingPoint` 和 `PFState`，返回 `PFResult`；QSTS、数据格式和 DER 控制器保持不变。

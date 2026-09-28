@@ -1,7 +1,8 @@
 """OpenDSS QSTS simulation with unified DER interface."""
 
 from src.der_model import DERModel, PVModel, WindModel, BESSModel, EVModel
-from src.opendss_model import OpenDSSModel
+from src.solvers.opendss_solver import OpenDSSSolver
+from src.power_flow import DERCommand, NetworkModel, OperatingPoint, PFResult, PFState, PowerFlowSolver, SolverContext
 from src.qsts import run_qsts
 
 __all__ = [
@@ -10,6 +11,13 @@ __all__ = [
     "WindModel",
     "BESSModel",
     "EVModel",
-    "OpenDSSModel",
+    "OpenDSSSolver",
+    "DERCommand",
+    "NetworkModel",
+    "OperatingPoint",
+    "PFResult",
+    "PFState",
+    "PowerFlowSolver",
+    "SolverContext",
     "run_qsts",
 ]

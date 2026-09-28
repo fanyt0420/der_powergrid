@@ -1,0 +1,298 @@
+{
+  "base": {
+    "frequency_hz": 60,
+    "base_kv_ll": 12.47,
+    "slack_bus": "source"
+  },
+  "buses": [
+    {
+      "id": "source",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": true
+    },
+    {
+      "id": "bus1",
+      "phases": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "bus2",
+      "phases": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "bus3",
+      "phases": [
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "branches": [
+    {
+      "id": "L1",
+      "from_bus": "source",
+      "to_bus": "bus1",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "length_km": 1.0,
+      "z_ohm_per_km": [
+        [
+          [
+            0.4,
+            0.3
+          ],
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.05,
+            0.1
+          ]
+        ],
+        [
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.4,
+            0.3
+          ],
+          [
+            0.05,
+            0.1
+          ]
+        ],
+        [
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.4,
+            0.3
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "L2",
+      "from_bus": "bus1",
+      "to_bus": "bus2",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "length_km": 1.2,
+      "z_ohm_per_km": [
+        [
+          [
+            0.4,
+            0.3
+          ],
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.05,
+            0.1
+          ]
+        ],
+        [
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.4,
+            0.3
+          ],
+          [
+            0.05,
+            0.1
+          ]
+        ],
+        [
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.4,
+            0.3
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "L3",
+      "from_bus": "bus2",
+      "to_bus": "bus3",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "length_km": 0.8,
+      "z_ohm_per_km": [
+        [
+          [
+            0.4,
+            0.3
+          ],
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.05,
+            0.1
+          ]
+        ],
+        [
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.4,
+            0.3
+          ],
+          [
+            0.05,
+            0.1
+          ]
+        ],
+        [
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.05,
+            0.1
+          ],
+          [
+            0.4,
+            0.3
+          ]
+        ]
+      ]
+    }
+  ],
+  "devices": [
+    {
+      "id": "Load1",
+      "kind": "load",
+      "bus": "bus1",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "connection": "wye",
+      "kv_ll": 12.47
+    },
+    {
+      "id": "Load2",
+      "kind": "load",
+      "bus": "bus2",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "connection": "wye",
+      "kv_ll": 12.47
+    },
+    {
+      "id": "Load3",
+      "kind": "load",
+      "bus": "bus3",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "connection": "wye",
+      "kv_ll": 12.47
+    },
+    {
+      "id": "PV1",
+      "kind": "pv",
+      "bus": "bus1",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "p_rated_kw": 400,
+      "profile_file": "der_profiles/pv1.csv"
+    },
+    {
+      "id": "Wind1",
+      "kind": "wind",
+      "bus": "bus2",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "p_rated_kw": 80,
+      "profile_file": "der_profiles/wind1.csv"
+    },
+    {
+      "id": "BESS1",
+      "kind": "bess",
+      "bus": "bus2",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "p_rated_kw": 100,
+      "energy_kwh": 200,
+      "reserve_soc": 20,
+      "initial_soc": 50,
+      "profile_file": "der_profiles/bess1.csv"
+    },
+    {
+      "id": "EV1",
+      "kind": "ev",
+      "bus": "bus3",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "p_rated_kw": 65,
+      "profile_file": "der_profiles/ev1.csv"
+    }
+  ]
+}

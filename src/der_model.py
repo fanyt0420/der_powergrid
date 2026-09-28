@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.power_flow import DERCommand, PFResult
+
 
 class DERModel(ABC):
     """Abstract base class for Distributed Energy Resource models.
@@ -111,13 +113,29 @@ class DERModel(ABC):
             "droop_kvar_per_pu": float(row.get("droop_kvar_per_pu", 0.0)),
         }
 
-    def control_step(self, dss_interface: Any, injection: Dict[str, Any]) -> Dict[str, Any]:
+    def to_command(self, injection: Dict[str, Any]) -> DERCommand:
+        """Convert model-specific profile data to a solver-neutral DER command."""
+        parameters = {
+            key: value
+            for key, value in injection.items()
+            if key not in {"p_kw", "q_kvar", "controller_type"}
+        }
+        if "soc" in parameters:
+            parameters["soc_pct"] = parameters.pop("soc")
+        return DERCommand(
+            p_kw=float(injection["p_kw"]),
+            q_kvar=float(injection["q_kvar"]),
+            controller_type=str(injection.get("controller_type", "constant_pq")),
+            parameters=parameters,
+        )
+
+    def control_step(self, pf_result: PFResult, injection: Dict[str, Any]) -> Dict[str, Any]:
         """Evaluate an algebraic DER controller after one OpenDSS power-flow solve."""
         if injection.get("controller_type") != "volt_var" or not self.bus_name:
             return injection
 
-        dss_interface.SetActiveBus(self.bus_name)
-        voltages = list(dss_interface.ActiveBus.puVmagAngle)[::2]
+        prefix = f"{self.bus_name.lower()}."
+        voltages = [abs(value) for key, value in pf_result.bus_voltages.items() if key.lower().startswith(prefix)]
         if not voltages:
             return injection
 
@@ -141,7 +159,7 @@ class DERModel(ABC):
 class PVModel(DERModel):
     """Photovoltaic generation model."""
 
-    def __init__(self, name: str = "PV1", profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
+    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
         super().__init__(name, "Generator", profile_file, bus_name)
 
     def _validate_profile(self) -> None:
@@ -199,7 +217,7 @@ class PVModel(DERModel):
 class WindModel(DERModel):
     """Wind turbine generation model."""
 
-    def __init__(self, name: str = "Wind1", profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
+    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
         super().__init__(name, "Generator", profile_file, bus_name)
 
     def _validate_profile(self) -> None:
@@ -241,13 +259,23 @@ class WindModel(DERModel):
 class BESSModel(DERModel):
     """Battery Energy Storage System model."""
 
-    def __init__(self, name: str = "BESS1", profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
+    def __init__(
+        self,
+        name: str,
+        profile_file: Optional[str | Path] = None,
+        bus_name: Optional[str] = None,
+        capacity_kwh: float = 200.0,
+        reserve_soc: float = 20.0,
+        initial_soc: float = 50.0,
+        charge_efficiency: float = 0.95,
+        discharge_efficiency: float = 0.95,
+    ):
         super().__init__(name, "Storage", profile_file, bus_name)
-        self._soc = 50.0
-        self.capacity_kwh = 200.0
-        self.reserve_soc = 20.0
-        self.charge_efficiency = 0.95
-        self.discharge_efficiency = 0.95
+        self._soc = initial_soc
+        self.capacity_kwh = capacity_kwh
+        self.reserve_soc = reserve_soc
+        self.charge_efficiency = charge_efficiency
+        self.discharge_efficiency = discharge_efficiency
 
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
@@ -344,7 +372,7 @@ class BESSModel(DERModel):
 class EVModel(DERModel):
     """Electric Vehicle charging model."""
 
-    def __init__(self, name: str = "EV1", profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
+    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
         super().__init__(name, "Load", profile_file, bus_name)
 
     def _validate_profile(self) -> None:
