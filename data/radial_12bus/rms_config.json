@@ -1,0 +1,65 @@
+{
+  "dynamic_devices": [
+    {
+      "device_id": "PV1",
+      "model_type": "first_order_pq",
+      "tau_p_s": 0.2,
+      "tau_q_s": 0.1
+    },
+    {
+      "device_id": "PV2",
+      "model_type": "first_order_pq",
+      "tau_p_s": 0.2,
+      "tau_q_s": 0.1
+    },
+    {
+      "device_id": "Wind1",
+      "model_type": "first_order_pq",
+      "tau_p_s": 0.3,
+      "tau_q_s": 0.15
+    },
+    {
+      "device_id": "BESS1",
+      "model_type": "first_order_pq",
+      "tau_p_s": 0.5,
+      "tau_q_s": 0.2
+    },
+    {
+      "device_id": "EV1",
+      "model_type": "first_order_pq",
+      "tau_p_s": 0.3,
+      "tau_q_s": 0.2
+    }
+  ],
+  "scenarios": {
+    "flat_run": {
+      "dt_s": 0.02,
+      "t_end_s": 2.0,
+      "events": []
+    },
+    "load_step": {
+      "dt_s": 0.02,
+      "t_end_s": 2.0,
+      "events": [
+        {
+          "time_s": 1.0,
+          "type": "load_scale",
+          "device_id": "Load12",
+          "p_multiplier": 1.1,
+          "q_multiplier": 1.1
+        }
+      ]
+    },
+    "der_trip": {
+      "dt_s": 0.02,
+      "t_end_s": 2.0,
+      "events": [
+        {
+          "time_s": 1.0,
+          "type": "der_trip",
+          "device_id": "PV1"
+        }
+      ]
+    }
+  }
+}

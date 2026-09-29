@@ -25,6 +25,24 @@ TOPOLOGY_POSITIONS = {
 }
 
 
+def rms_config() -> dict:
+    """Dynamic parameters only; topology and QSTS setpoints remain in existing files."""
+    return {
+        "dynamic_devices": [
+            {"device_id": "PV1", "model_type": "first_order_pq", "tau_p_s": 0.20, "tau_q_s": 0.10},
+            {"device_id": "PV2", "model_type": "first_order_pq", "tau_p_s": 0.20, "tau_q_s": 0.10},
+            {"device_id": "Wind1", "model_type": "first_order_pq", "tau_p_s": 0.30, "tau_q_s": 0.15},
+            {"device_id": "BESS1", "model_type": "first_order_pq", "tau_p_s": 0.50, "tau_q_s": 0.20},
+            {"device_id": "EV1", "model_type": "first_order_pq", "tau_p_s": 0.30, "tau_q_s": 0.20},
+        ],
+        "scenarios": {
+            "flat_run": {"dt_s": 0.02, "t_end_s": 2.0, "events": []},
+            "load_step": {"dt_s": 0.02, "t_end_s": 2.0, "events": [{"time_s": 1.0, "type": "load_scale", "device_id": "Load12", "p_multiplier": 1.10, "q_multiplier": 1.10}]},
+            "der_trip": {"dt_s": 0.02, "t_end_s": 2.0, "events": [{"time_s": 1.0, "type": "der_trip", "device_id": "PV1"}]},
+        },
+    }
+
+
 def network() -> dict:
     devices = [{"id": f"Load{i}", "kind": "load", "bus": f"b{i}", "phases": [1, 2, 3], "connection": "wye", "kv_ll": 12.47} for i in range(1, 13)]
     devices += [
@@ -51,6 +69,7 @@ def main() -> None:
     case_network = network()
     (CASE_DIR / "network.json").write_text(json.dumps(case_network, indent=2), encoding="utf-8")
     (CASE_DIR / "network.dss").write_text(dss_text(), encoding="utf-8")
+    (CASE_DIR / "rms_config.json").write_text(json.dumps(rms_config(), indent=2), encoding="utf-8")
     plot_network_topology(case_network, CASE_DIR / "network_topology.png", TOPOLOGY_POSITIONS)
     shape = [0.55, 0.52, 0.50, 0.49, 0.50, 0.57, 0.68, 0.79, 0.87, 0.92, 0.96, 0.98, 1.0, 1.01, 1.03, 1.06, 1.10, 1.15, 1.20, 1.22, 1.16, 1.04, 0.84, 0.68]
     rows = []

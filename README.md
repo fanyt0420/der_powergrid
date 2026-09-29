@@ -25,7 +25,8 @@ output/
 ├── network.dss             # 同一网络的 OpenDSS 表示
 ├── network_topology.png    # 由生成器绘制的拓扑图：节点、DER 与支路信息
 ├── load_profiles.csv       # 逐负荷 P/Q 时序
-└── der_profiles/           # 每台 DER 一份时序和控制器配置
+├── der_profiles/           # 每台 DER 一份时序和控制器配置
+└── rms_config.json         # 可选；仅包含 RMS 动态参数和扰动场景
 ```
 
 `network.json` 是固定网络的规范输入，包含母线、支路、三相阻抗矩阵、设备类型、接入节点、额定参数和 DER profile 相对路径。`network.dss` 是 OpenDSS 后端的兼容文件，由同一个算例生成器创建。
@@ -274,5 +275,76 @@ SOC_{t+1}=SOC_t+\frac{|P_t|\eta_{ch}\Delta t}{E}\times100,\quad P_t<0
 2. 在 `data/<case_name>/` 生成 `network.json`、`network.dss`、`load_profiles.csv` 和 `der_profiles/`。
 3. 设备定义中提供 `kind`、`bus`、额定参数和 `profile_file`。
 4. 使用 `python run.py --data-dir data/<case_name>` 验证。
+
+## QSTS 到 RMS 动态仿真
+
+RMS 首版建立在既有 QSTS 结果之上：先用小时级 QSTS 找到已收敛的运行断面，再从指定时刻切换到秒级动态仿真。
+
+```text
+DER profiles → QSTS → saved PFResult-equivalent data → RMS initialization → RMS simulation
+```
+
+`DynamicOperatingPoint` 是已求解的运行断面，在 [rms_model.py](src/rms_model.py) 中定义，包含指定 QSTS 时刻的各相复电压、每个基础负荷的 P/Q、每台 DER 的最终 P/Q、已保存的慢状态（当前为 BESS SOC）以及 QSTS 汇总元数据。它由以下已有文件重建，不复制网络拓扑或时序数据：
+
+- `network.json`
+- `load_profiles.csv`
+- `output/<case>/qsts_bus_voltages.csv`
+- `output/<case>/qsts_system.csv`
+
+### RMS 模型与边界
+
+第一阶段仅实现 `first_order_pq` 设备模型：
+
+\[
+\tau_P \dot P=P^{ref}-P,\qquad \tau_Q \dot Q=Q^{ref}-Q.
+\]
+
+初始化时严格采用 QSTS 断面：\(P(0)=P^\star\)、\(Q(0)=Q^\star\)、\(V(0)=V^\star\)。每个秒级步长以显式 Euler 推进 DER 的 P/Q 状态，然后通过 `PowerFlowSolver.solve()` 重解网络代数方程。因此当前版本是“动态设备状态 + 准稳态网络代数求解”的 RMS 验证框架，不是完整的电磁暂态或 GFL/GFM DAE 求解器。后续可保留 `RMSDevice.initialize()/derivative()/injection()` 接口，替换为 GFL、GFM、DER_A 或同步机模型，并替换网络代数求解部分。
+
+`RMSState` 保存当前秒级时间、设备动态状态 \(x\)、母线复电压 \(z\) 及潮流 warm-start 状态；`RMSResult` 返回时序汇总表、母线相电压表和最终状态。RMS 编排不依赖 `OpenDSSSolver` 的具体类，只依赖 `PowerFlowSolver`，当前入口选择 OpenDSS 后端。
+
+### `rms_config.json`
+
+该文件只补充 QSTS 中不存在的动态信息。`device_id` 必须引用既有 `network.json` 中的 DER，不能重复定义接入母线、额定功率或 QSTS 时序。例如 12 节点算例配置了所有 DER 的一阶时间常数，以及三个场景：
+
+```json
+{
+  "dynamic_devices": [
+    {"device_id": "PV1", "model_type": "first_order_pq", "tau_p_s": 0.2, "tau_q_s": 0.1}
+  ],
+  "scenarios": {
+    "flat_run": {"dt_s": 0.02, "t_end_s": 2.0, "events": []},
+    "load_step": {
+      "dt_s": 0.02,
+      "t_end_s": 2.0,
+      "events": [{"time_s": 1.0, "type": "load_scale", "device_id": "Load12", "p_multiplier": 1.1, "q_multiplier": 1.1}]
+    },
+    "der_trip": {
+      "dt_s": 0.02,
+      "t_end_s": 2.0,
+      "events": [{"time_s": 1.0, "type": "der_trip", "device_id": "PV1"}]
+    }
+  }
+}
+```
+
+`load_scale` 立即改变指定基础负荷的 P/Q；`der_trip` 将指定动态 DER 的 \(P^{ref},Q^{ref}\) 设为零，实际 P/Q 按其时间常数衰减。
+
+### 运行 RMS
+
+先生成 QSTS 输出，再选定一个小时作为动态初始工作点：
+
+```powershell
+python run.py --data-dir data\radial_12bus
+python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --hour 12 --scenario flat_run
+python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --hour 12 --scenario load_step
+python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --hour 12 --scenario der_trip
+```
+
+默认输出目录是 `output/<case>/rms/<scenario>/`：
+
+- `rms_summary.csv`：每个秒级时刻的扰动标签、潮流迭代数、最小/最大电压、网损、源侧 P/Q 及每台动态 DER 的实际 P/Q；
+- `rms_bus_voltages.csv`：每时刻、每母线相的电压幅值和相角；
+- `rms_initialization.json`：选用的 QSTS 小时、初始 DER P/Q 和慢状态，便于复现工作点。
 
 新增 DER 类型时，继承 `DERModel`，在 `DERModel.SUPPORTED_CONTROLLERS` 登记控制器类型，并实现 profile 校验、注入、控制方程和状态更新。新增自研求解器时，在 `src/solvers/custom_pf_solver.py` 实现 `build()` 与 `solve()`，读取相同的 `NetworkModel`、`OperatingPoint` 和 `PFState`，返回 `PFResult`；QSTS、数据格式和 DER 控制器保持不变。

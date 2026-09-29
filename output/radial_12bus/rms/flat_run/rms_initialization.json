@@ -1,0 +1,31 @@
+{
+  "qsts_hour": 12,
+  "scenario": "flat_run",
+  "initial_der_pq": {
+    "PV1": {
+      "p_kw": 180.0,
+      "q_kvar": 0.1901770653781853
+    },
+    "PV2": {
+      "p_kw": 100.0,
+      "q_kvar": 0.1426833378753356
+    },
+    "Wind1": {
+      "p_kw": 79.0,
+      "q_kvar": 0.0
+    },
+    "BESS1": {
+      "p_kw": -45.0,
+      "q_kvar": 0.0
+    },
+    "EV1": {
+      "p_kw": 0.0,
+      "q_kvar": 0.0
+    }
+  },
+  "initial_der_states": {
+    "BESS1": {
+      "soc_pct": 45.650000000000006
+    }
+  }
+}
