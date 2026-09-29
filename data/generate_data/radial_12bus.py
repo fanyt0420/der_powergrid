@@ -28,12 +28,13 @@ TOPOLOGY_POSITIONS = {
 def rms_config() -> dict:
     """Dynamic parameters only; topology and QSTS setpoints remain in existing files."""
     return {
+        "nominal_frequency_hz": 60.0,
         "dynamic_devices": [
-            {"device_id": "PV1", "model_type": "first_order_pq", "tau_p_s": 0.20, "tau_q_s": 0.10},
-            {"device_id": "PV2", "model_type": "first_order_pq", "tau_p_s": 0.20, "tau_q_s": 0.10},
-            {"device_id": "Wind1", "model_type": "first_order_pq", "tau_p_s": 0.30, "tau_q_s": 0.15},
-            {"device_id": "BESS1", "model_type": "first_order_pq", "tau_p_s": 0.50, "tau_q_s": 0.20},
-            {"device_id": "EV1", "model_type": "first_order_pq", "tau_p_s": 0.30, "tau_q_s": 0.20},
+            {"device_id": "PV1", "model_type": "gfl_inverter", "current_limit_pu": 1.25, "pll_kp_hz_per_rad": 12.0, "pll_ki_hz_per_rad_s": 180.0, "tau_p_control_s": 0.08, "tau_q_control_s": 0.06, "tau_current_s": 0.015},
+            {"device_id": "PV2", "model_type": "gfm_inverter", "current_limit_pu": 1.25, "inertia_s": 1.5, "damping_pu_per_hz": 0.25, "p_droop_pu_per_hz": 0.08, "q_droop_pu_per_pu": 2.0, "voltage_droop_pu_per_pu": 0.5, "tau_power_control_s": 0.08, "tau_power_measure_s": 0.04, "tau_voltage_control_s": 0.05},
+            {"device_id": "Wind1", "model_type": "aggregate_der", "current_limit_pu": 1.20, "tau_p_control_s": 0.25, "tau_q_control_s": 0.15, "tau_measure_s": 0.05, "voltage_support_pu_per_pu": 1.0},
+            {"device_id": "BESS1", "model_type": "gfl_inverter", "current_limit_pu": 1.30, "pll_kp_hz_per_rad": 10.0, "pll_ki_hz_per_rad_s": 150.0, "tau_p_control_s": 0.10, "tau_q_control_s": 0.08, "tau_current_s": 0.02},
+            {"device_id": "EV1", "model_type": "aggregate_der", "current_limit_pu": 1.10, "tau_p_control_s": 0.30, "tau_q_control_s": 0.20, "tau_measure_s": 0.10, "voltage_support_pu_per_pu": 0.0},
         ],
         "scenarios": {
             "flat_run": {"dt_s": 0.02, "t_end_s": 2.0, "events": []},

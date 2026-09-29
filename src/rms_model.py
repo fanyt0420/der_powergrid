@@ -1,16 +1,12 @@
-"""QSTS-to-RMS handoff and a minimal solver-neutral RMS simulation framework.
-
-The first RMS model deliberately keeps the network quasi-steady algebraic:
-each time step integrates device states and calls a :class:`PowerFlowSolver` to
-enforce the network equations.  It is an architectural stepping stone for a
-future DAE solver, not a replacement for an electromagnetic-transient model.
-"""
+"""QSTS-to-RMS handoff and dynamic DER models on an algebraic network backend."""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from cmath import exp, phase, rect
 from dataclasses import dataclass, field
 import json
-from math import ceil
+from math import ceil, pi, radians, sin
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -21,8 +17,6 @@ from src.power_flow import DERCommand, NetworkModel, OperatingPoint, PFResult, P
 
 @dataclass(frozen=True)
 class DynamicOperatingPoint:
-    """Complete solved QSTS operating point used to initialize RMS."""
-
     time_index: int
     bus_voltages: Mapping[str, complex]
     load_pq: Mapping[str, complex]
@@ -33,8 +27,6 @@ class DynamicOperatingPoint:
 
 @dataclass(frozen=True)
 class RMSState:
-    """RMS DAE state at one time instant: dynamic device state ``x`` and bus ``z``."""
-
     time: float
     bus_voltages: Mapping[str, complex]
     device_states: Mapping[str, Mapping[str, float]]
@@ -43,215 +35,258 @@ class RMSState:
 
 @dataclass(frozen=True)
 class RMSResult:
-    """In-memory RMS output. Data frames are written by ``run_rms.py`` only."""
-
     summary: pd.DataFrame
     bus_voltages: pd.DataFrame
     final_state: RMSState
 
 
-@dataclass
-class RMSDevice:
-    """Minimal first-order P/Q tracking dynamic model for one existing DER.
+def _clip_current(p: float, q: float, voltage: float, limit: float) -> tuple[float, float]:
+    magnitude = (p * p + q * q) ** 0.5 / max(voltage, 1e-6)
+    if magnitude <= limit:
+        return p, q
+    scale = limit / magnitude
+    return p * scale, q * scale
 
-    ``p_kw`` and ``q_kvar`` are the dynamic states.  Their targets come from the
-    selected QSTS operating point and may be altered by a disturbance.
-    """
 
-    device_id: str
-    model_type: str
-    tau_p_s: float
-    tau_q_s: float
-    p_target_kw: float
-    q_target_kvar: float
+def _bus_voltage(voltages: Mapping[str, complex], bus: str) -> tuple[float, float]:
+    """Positive-sequence voltage in p.u. and rad from phase phasors."""
+    values = {int(key.rsplit(".", 1)[1]): value for key, value in voltages.items() if key.lower().startswith(f"{bus.lower()}.")}
+    if {1, 2, 3}.issubset(values):
+        a = exp(2j * pi / 3)
+        value = (values[1] + a * values[2] + a * a * values[3]) / 3
+    elif values:
+        value = next(iter(values.values()))
+    else:
+        raise ValueError(f"No voltage found for bus {bus!r}.")
+    return abs(value), phase(value)
 
-    def initialize(self, command: DERCommand) -> dict[str, float]:
-        return {"p_kw": command.p_kw, "q_kvar": command.q_kvar}
 
-    def derivative(self, state: Mapping[str, float]) -> dict[str, float]:
-        if self.model_type != "first_order_pq":
-            raise ValueError(f"Unsupported RMS model type {self.model_type!r} for {self.device_id}.")
-        return {
-            "p_kw": (self.p_target_kw - float(state["p_kw"])) / self.tau_p_s,
-            "q_kvar": (self.q_target_kvar - float(state["q_kvar"])) / self.tau_q_s,
-        }
+class RMSDevice(ABC):
+    """Dynamic DER interface; outputs are solver-neutral total P/Q commands."""
 
-    def injection(self, state: Mapping[str, float], template: DERCommand) -> DERCommand:
-        return template.with_pq(float(state["p_kw"]), float(state["q_kvar"]))
+    def __init__(self, device_id: str, bus: str, rating_kw: float, config: Mapping[str, Any], command: DERCommand) -> None:
+        self.device_id, self.bus, self.rating_kw, self.config = device_id, bus, rating_kw, config
+        self.p_target_kw, self.q_target_kvar = command.p_kw, command.q_kvar
+        self.current_limit_pu = float(config["current_limit_pu"])
+        if rating_kw <= 0 or self.current_limit_pu <= 0:
+            raise ValueError(f"{device_id}: rating_kw and current_limit_pu must be positive.")
+
+    def targets_pu(self) -> tuple[float, float]:
+        return self.p_target_kw / self.rating_kw, self.q_target_kvar / self.rating_kw
 
     def trip(self) -> None:
-        self.p_target_kw = 0.0
-        self.q_target_kvar = 0.0
+        self.p_target_kw = self.q_target_kvar = 0.0
+
+    @abstractmethod
+    def initialize(self, command: DERCommand, voltage: float, angle: float) -> dict[str, float]: ...
+
+    @abstractmethod
+    def derivative(self, state: Mapping[str, float], voltage: float, angle: float) -> dict[str, float]: ...
+
+    @abstractmethod
+    def injection(self, state: Mapping[str, float], voltage: float, template: DERCommand) -> DERCommand: ...
+
+    def metrics(self, state: Mapping[str, float], voltage: float, angle: float) -> Mapping[str, float]:
+        return {}
 
 
-def _require_unique_row(frame: pd.DataFrame, column: str, value: int) -> pd.Series:
-    rows = frame[frame[column] == value]
-    if len(rows) != 1:
-        raise ValueError(f"Expected exactly one {column}={value} row, found {len(rows)}.")
-    return rows.iloc[0]
+class GFLInverter(RMSDevice):
+    """SRF-PLL, P/Q outer loops, current inner loop and circular current limit."""
+
+    def __init__(self, *args: Any, nominal_frequency_hz: float, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.f_nom = nominal_frequency_hz
+        for name in ("pll_kp_hz_per_rad", "pll_ki_hz_per_rad_s", "tau_p_control_s", "tau_q_control_s", "tau_current_s"):
+            if float(self.config[name]) <= 0:
+                raise ValueError(f"{self.device_id}: {name} must be positive.")
+
+    def initialize(self, command: DERCommand, voltage: float, angle: float) -> dict[str, float]:
+        p, q = command.p_kw / self.rating_kw, command.q_kvar / self.rating_kw
+        return {"p_filter_pu": p, "q_filter_pu": q, "i_d_pu": p / max(voltage, 1e-6), "i_q_pu": q / max(voltage, 1e-6), "pll_angle_rad": angle, "pll_integrator": 0.0}
+
+    def derivative(self, state: Mapping[str, float], voltage: float, angle: float) -> dict[str, float]:
+        p_ref, q_ref = self.targets_pu()
+        error = sin(angle - float(state["pll_angle_rad"]))
+        frequency = float(self.config["pll_kp_hz_per_rad"]) * error + float(self.config["pll_ki_hz_per_rad_s"]) * float(state["pll_integrator"])
+        i_d_ref, i_q_ref = _clip_current(float(state["p_filter_pu"]) / max(voltage, 1e-6), float(state["q_filter_pu"]) / max(voltage, 1e-6), voltage, self.current_limit_pu)
+        return {"p_filter_pu": (p_ref - float(state["p_filter_pu"])) / float(self.config["tau_p_control_s"]), "q_filter_pu": (q_ref - float(state["q_filter_pu"])) / float(self.config["tau_q_control_s"]), "i_d_pu": (i_d_ref - float(state["i_d_pu"])) / float(self.config["tau_current_s"]), "i_q_pu": (i_q_ref - float(state["i_q_pu"])) / float(self.config["tau_current_s"]), "pll_angle_rad": 2 * pi * frequency, "pll_integrator": error}
+
+    def injection(self, state: Mapping[str, float], voltage: float, template: DERCommand) -> DERCommand:
+        p, q = _clip_current(float(state["i_d_pu"]) * voltage, float(state["i_q_pu"]) * voltage, voltage, self.current_limit_pu)
+        return template.with_pq(p * self.rating_kw, q * self.rating_kw)
+
+    def metrics(self, state: Mapping[str, float], voltage: float, angle: float) -> Mapping[str, float]:
+        error = sin(angle - float(state["pll_angle_rad"]))
+        return {"frequency_hz": self.f_nom + float(self.config["pll_kp_hz_per_rad"]) * error + float(self.config["pll_ki_hz_per_rad_s"]) * float(state["pll_integrator"])}
+
+
+class GFMInverter(RMSDevice):
+    """Virtual-inertia grid former with P-f and Q-V droop, voltage loop and limit."""
+
+    def __init__(self, *args: Any, nominal_frequency_hz: float, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.f_nom = nominal_frequency_hz
+        for name in ("inertia_s", "damping_pu_per_hz", "p_droop_pu_per_hz", "q_droop_pu_per_pu", "tau_power_control_s", "tau_power_measure_s", "tau_voltage_control_s"):
+            if float(self.config[name]) <= 0:
+                raise ValueError(f"{self.device_id}: {name} must be positive.")
+
+    def initialize(self, command: DERCommand, voltage: float, angle: float) -> dict[str, float]:
+        p, q = command.p_kw / self.rating_kw, command.q_kvar / self.rating_kw
+        return {"p_output_pu": p, "q_output_pu": q, "p_measure_pu": p, "q_measure_pu": q, "frequency_deviation_hz": 0.0, "angle_rad": angle, "voltage_internal_pu": voltage, "voltage_reference_pu": voltage}
+
+    def derivative(self, state: Mapping[str, float], voltage: float, angle: float) -> dict[str, float]:
+        p_ref, q_ref = self.targets_pu()
+        frequency = float(state["frequency_deviation_hz"])
+        p_command = p_ref - float(self.config["p_droop_pu_per_hz"]) * frequency
+        q_command = q_ref + float(self.config["q_droop_pu_per_pu"]) * (float(state["voltage_reference_pu"]) - voltage)
+        p_command, q_command = _clip_current(p_command, q_command, voltage, self.current_limit_pu)
+        voltage_target = float(state["voltage_reference_pu"]) + float(self.config.get("voltage_droop_pu_per_pu", 0.0)) * (q_ref - float(state["q_measure_pu"]))
+        return {"p_output_pu": (p_command - float(state["p_output_pu"])) / float(self.config["tau_power_control_s"]), "q_output_pu": (q_command - float(state["q_output_pu"])) / float(self.config["tau_power_control_s"]), "p_measure_pu": (float(state["p_output_pu"]) - float(state["p_measure_pu"])) / float(self.config["tau_power_measure_s"]), "q_measure_pu": (float(state["q_output_pu"]) - float(state["q_measure_pu"])) / float(self.config["tau_power_measure_s"]), "frequency_deviation_hz": (p_ref - float(state["p_measure_pu"]) - float(self.config["damping_pu_per_hz"]) * frequency) / (2 * float(self.config["inertia_s"])), "angle_rad": 2 * pi * frequency, "voltage_internal_pu": (voltage_target - float(state["voltage_internal_pu"])) / float(self.config["tau_voltage_control_s"])}
+
+    def injection(self, state: Mapping[str, float], voltage: float, template: DERCommand) -> DERCommand:
+        p, q = _clip_current(float(state["p_output_pu"]), float(state["q_output_pu"]), voltage, self.current_limit_pu)
+        return template.with_pq(p * self.rating_kw, q * self.rating_kw)
+
+    def metrics(self, state: Mapping[str, float], voltage: float, angle: float) -> Mapping[str, float]:
+        return {"frequency_hz": self.f_nom + float(state["frequency_deviation_hz"]), "voltage_internal_pu": float(state["voltage_internal_pu"])}
+
+
+class AggregateDER(RMSDevice):
+    """Aggregate DER P/Q controls, measurement states, voltage support and limit."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        for name in ("tau_p_control_s", "tau_q_control_s", "tau_measure_s"):
+            if float(self.config[name]) <= 0:
+                raise ValueError(f"{self.device_id}: {name} must be positive.")
+
+    def initialize(self, command: DERCommand, voltage: float, angle: float) -> dict[str, float]:
+        p, q = command.p_kw / self.rating_kw, command.q_kvar / self.rating_kw
+        return {"p_output_pu": p, "q_output_pu": q, "p_measure_pu": p, "q_measure_pu": q, "voltage_reference_pu": voltage}
+
+    def derivative(self, state: Mapping[str, float], voltage: float, angle: float) -> dict[str, float]:
+        p_ref, q_ref = self.targets_pu()
+        q_ref += float(self.config.get("voltage_support_pu_per_pu", 0.0)) * (float(state["voltage_reference_pu"]) - voltage)
+        p_ref, q_ref = _clip_current(p_ref, q_ref, voltage, self.current_limit_pu)
+        return {"p_output_pu": (p_ref - float(state["p_output_pu"])) / float(self.config["tau_p_control_s"]), "q_output_pu": (q_ref - float(state["q_output_pu"])) / float(self.config["tau_q_control_s"]), "p_measure_pu": (float(state["p_output_pu"]) - float(state["p_measure_pu"])) / float(self.config["tau_measure_s"]), "q_measure_pu": (float(state["q_output_pu"]) - float(state["q_measure_pu"])) / float(self.config["tau_measure_s"])}
+
+    def injection(self, state: Mapping[str, float], voltage: float, template: DERCommand) -> DERCommand:
+        p, q = _clip_current(float(state["p_output_pu"]), float(state["q_output_pu"]), voltage, self.current_limit_pu)
+        return template.with_pq(p * self.rating_kw, q * self.rating_kw)
+
+
+MODEL_TYPES: Mapping[str, type[RMSDevice]] = {"gfl_inverter": GFLInverter, "gfm_inverter": GFMInverter, "aggregate_der": AggregateDER}
 
 
 def load_rms_config(path: str | Path) -> dict[str, Any]:
-    """Load and minimally validate RMS-only model parameters and events."""
     config = json.loads(Path(path).read_text(encoding="utf-8"))
-    if "scenarios" not in config or not isinstance(config["scenarios"], Mapping):
-        raise ValueError("rms_config.json must define a 'scenarios' object.")
-    if "dynamic_devices" not in config:
-        raise ValueError("rms_config.json must define 'dynamic_devices'.")
+    if "dynamic_devices" not in config or not isinstance(config.get("scenarios"), Mapping):
+        raise ValueError("rms_config.json requires dynamic_devices and scenarios.")
     return config
 
 
-def load_qsts_operating_point(
-    data_dir: str | Path,
-    qsts_output_dir: str | Path,
-    hour: int,
-    network: NetworkModel | None = None,
-) -> DynamicOperatingPoint:
-    """Reconstruct the solved operating point at one QSTS hour from saved output."""
+def load_qsts_operating_point(data_dir: str | Path, qsts_output_dir: str | Path, hour: int, network: NetworkModel | None = None) -> DynamicOperatingPoint:
     data_dir, qsts_output_dir = Path(data_dir), Path(qsts_output_dir)
     network = network or NetworkModel.from_json(data_dir / "network.json")
-    load_profile = pd.read_csv(data_dir / "load_profiles.csv")
-    voltage_data = pd.read_csv(qsts_output_dir / "qsts_bus_voltages.csv")
-    system_data = pd.read_csv(qsts_output_dir / "qsts_system.csv")
-    system_row = _require_unique_row(system_data, "hour", hour)
-    hour_loads = load_profile[load_profile["hour"] == hour]
-    expected_loads = network.base_load_names()
-    loads = {str(row.load_name): complex(float(row.p_kw), float(row.q_kvar)) for row in hour_loads.itertuples(index=False)}
-    if set(loads) != expected_loads:
-        raise ValueError(f"QSTS load profile at hour {hour} does not match network loads.")
-
-    voltages: dict[str, complex] = {}
-    for row in voltage_data[voltage_data["hour"] == hour].itertuples(index=False):
-        if pd.isna(row.v_pu) or pd.isna(row.angle_deg):
-            raise ValueError(f"Invalid saved voltage at hour {hour}, bus={row.bus}, node={row.node}.")
-        from cmath import rect
-        from math import radians
-        voltages[f"{row.bus}.{int(row.node)}"] = rect(float(row.v_pu), radians(float(row.angle_deg)))
+    loads_df, volts_df, system_df = pd.read_csv(data_dir / "load_profiles.csv"), pd.read_csv(qsts_output_dir / "qsts_bus_voltages.csv"), pd.read_csv(qsts_output_dir / "qsts_system.csv")
+    rows = system_df[system_df.hour == hour]
+    if len(rows) != 1:
+        raise ValueError(f"Expected one QSTS result row for hour {hour}, found {len(rows)}.")
+    row = rows.iloc[0]
+    loads = {str(r.load_name): complex(float(r.p_kw), float(r.q_kvar)) for r in loads_df[loads_df.hour == hour].itertuples(index=False)}
+    if set(loads) != network.base_load_names():
+        raise ValueError(f"Load data at hour {hour} does not match network.json.")
+    voltages = {f"{r.bus}.{int(r.node)}": rect(float(r.v_pu), radians(float(r.angle_deg))) for r in volts_df[volts_df.hour == hour].itertuples(index=False)}
     if not voltages:
-        raise ValueError(f"No saved bus voltages for QSTS hour {hour}.")
-
+        raise ValueError(f"No QSTS bus voltage records at hour {hour}.")
     commands: dict[str, DERCommand] = {}
-    states: dict[str, dict[str, float]] = {}
+    slow_states: dict[str, dict[str, float]] = {}
     for device in network.devices:
         if device["kind"] == "load":
             continue
-        device_id = str(device["id"])
-        prefix = device_id.lower()
-        p_column, q_column = f"{prefix}_p_kw", f"{prefix}_q_kvar"
-        if p_column not in system_row or q_column not in system_row:
-            raise ValueError(f"QSTS system output lacks final P/Q columns for {device_id}.")
+        name, prefix = str(device["id"]), str(device["id"]).lower()
+        p_col, q_col = f"{prefix}_p_kw", f"{prefix}_q_kvar"
+        if p_col not in row or q_col not in row:
+            raise ValueError(f"QSTS output lacks P/Q for {name}.")
         parameters: dict[str, float] = {}
-        soc_column = f"{prefix}_soc_pct"
-        if soc_column in system_row and not pd.isna(system_row[soc_column]):
-            parameters["soc_pct"] = float(system_row[soc_column])
-            states[device_id] = {"soc_pct": float(system_row[soc_column])}
-        commands[device_id] = DERCommand(float(system_row[p_column]), float(system_row[q_column]), "qsts_final", parameters)
-
-    metadata = {key: value for key, value in system_row.to_dict().items() if key not in {"hour"}}
-    return DynamicOperatingPoint(hour, voltages, loads, commands, states, metadata)
+        soc_col = f"{prefix}_soc_pct"
+        if soc_col in row and not pd.isna(row[soc_col]):
+            parameters["soc_pct"] = float(row[soc_col]); slow_states[name] = {"soc_pct": float(row[soc_col])}
+        commands[name] = DERCommand(float(row[p_col]), float(row[q_col]), "qsts_final", parameters)
+    return DynamicOperatingPoint(hour, voltages, loads, commands, slow_states, {key: value for key, value in row.to_dict().items() if key != "hour"})
 
 
-def initialize_rms(
-    operating_point: DynamicOperatingPoint,
-    rms_config: Mapping[str, Any],
-) -> tuple[RMSState, dict[str, RMSDevice]]:
-    """Set x(0), z(0) directly from a solved QSTS operating point."""
+def initialize_rms(operating_point: DynamicOperatingPoint, rms_config: Mapping[str, Any], network: NetworkModel) -> tuple[RMSState, dict[str, RMSDevice]]:
+    definitions = {str(d["id"]): d for d in network.devices if d["kind"] != "load"}
+    f_nom = float(rms_config.get("nominal_frequency_hz", network.base.get("frequency_hz", 60.0)))
     devices: dict[str, RMSDevice] = {}
     states: dict[str, Mapping[str, float]] = {}
-    for raw in rms_config["dynamic_devices"]:
-        device_id = str(raw["device_id"])
-        if device_id not in operating_point.der_pq:
-            raise ValueError(f"RMS device {device_id!r} is not a DER in the QSTS operating point.")
-        tau_p, tau_q = float(raw["tau_p_s"]), float(raw["tau_q_s"])
-        if tau_p <= 0 or tau_q <= 0:
-            raise ValueError(f"RMS time constants for {device_id} must be positive.")
-        command = operating_point.der_pq[device_id]
-        device = RMSDevice(device_id, str(raw["model_type"]), tau_p, tau_q, command.p_kw, command.q_kvar)
-        devices[device_id] = device
-        states[device_id] = device.initialize(command)
+    for config in rms_config["dynamic_devices"]:
+        name, model_type = str(config["device_id"]), str(config["model_type"])
+        if name in devices or name not in definitions or model_type not in MODEL_TYPES:
+            raise ValueError(f"Invalid RMS device configuration: {name!r}, {model_type!r}.")
+        definition, command = definitions[name], operating_point.der_pq[name]
+        args = (name, str(definition["bus"]), float(definition["p_rated_kw"]), config, command)
+        device = MODEL_TYPES[model_type](*args, nominal_frequency_hz=f_nom) if model_type != "aggregate_der" else AggregateDER(*args)
+        voltage, angle = _bus_voltage(operating_point.bus_voltages, device.bus)
+        devices[name] = device
+        states[name] = {**device.initialize(command, voltage, angle), **operating_point.der_states.get(name, {})}
     return RMSState(0.0, dict(operating_point.bus_voltages), states, PFState(operating_point.bus_voltages)), devices
 
 
-def _apply_events(
-    events: Sequence[Mapping[str, Any]],
-    applied: set[int],
-    current_time: float,
-    loads: dict[str, complex],
-    devices: Mapping[str, RMSDevice],
-) -> list[str]:
-    labels: list[str] = []
+def _events(events: Sequence[Mapping[str, Any]], applied: set[int], time_s: float, loads: dict[str, complex], devices: Mapping[str, RMSDevice]) -> list[str]:
+    labels = []
     for index, event in enumerate(events):
-        if index in applied or current_time + 1e-12 < float(event["time_s"]):
+        if index in applied or time_s + 1e-12 < float(event["time_s"]):
             continue
-        event_type, target = str(event["type"]), str(event["device_id"])
-        if event_type == "load_scale":
-            if target not in loads:
-                raise ValueError(f"Load-step target {target!r} is not a base load.")
-            value = loads[target]
-            loads[target] = complex(value.real * float(event.get("p_multiplier", 1.0)), value.imag * float(event.get("q_multiplier", 1.0)))
-        elif event_type == "der_trip":
-            if target not in devices:
-                raise ValueError(f"DER-trip target {target!r} has no configured RMS model.")
+        kind, target = str(event["type"]), str(event["device_id"])
+        if kind == "load_scale":
+            if target not in loads: raise ValueError(f"Unknown base load {target!r}.")
+            value = loads[target]; loads[target] = complex(value.real * float(event.get("p_multiplier", 1)), value.imag * float(event.get("q_multiplier", 1)))
+        elif kind == "der_trip":
+            if target not in devices: raise ValueError(f"DER trip requires a dynamic device: {target!r}.")
             devices[target].trip()
-        else:
-            raise ValueError(f"Unsupported RMS disturbance type {event_type!r}.")
-        applied.add(index)
-        labels.append(f"{event_type}:{target}")
+        else: raise ValueError(f"Unsupported RMS event {kind!r}.")
+        applied.add(index); labels.append(f"{kind}:{target}")
     return labels
 
 
-def _result_rows(time_s: float, result: PFResult, device_states: Mapping[str, Mapping[str, float]], event: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _rows(time_s: float, result: PFResult, states: Mapping[str, Mapping[str, float]], devices: Mapping[str, RMSDevice], event: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     voltage_rows = [{"time_s": time_s, **record} for record in result.bus_voltage_records]
     summary: dict[str, Any] = {"time_s": time_s, "event": event, "pf_iterations": result.iterations, **result.summary}
-    for device_id, state in device_states.items():
-        summary[f"{device_id.lower()}_p_kw"] = float(state["p_kw"])
-        summary[f"{device_id.lower()}_q_kvar"] = float(state["q_kvar"])
+    for name, state in states.items():
+        voltage, angle = _bus_voltage(result.bus_voltages, devices[name].bus)
+        command = devices[name].injection(state, voltage, DERCommand(0, 0, ""))
+        prefix = name.lower(); summary[f"{prefix}_p_kw"], summary[f"{prefix}_q_kvar"] = command.p_kw, command.q_kvar
+        for key, value in {**state, **devices[name].metrics(state, voltage, angle)}.items():
+            if key not in {"p_output_pu", "q_output_pu", "i_d_pu", "i_q_pu"}: summary[f"{prefix}_{key}"] = value
     return voltage_rows, summary
 
 
-def run_rms(
-    solver: PowerFlowSolver,
-    network: NetworkModel,
-    operating_point: DynamicOperatingPoint,
-    rms_config: Mapping[str, Any],
-    scenario_name: str,
-) -> RMSResult:
-    """Run seconds-scale first-order DER dynamics with algebraic network solves."""
-    try:
-        scenario = rms_config["scenarios"][scenario_name]
-    except KeyError as error:
-        available = ", ".join(rms_config["scenarios"])
-        raise ValueError(f"Unknown RMS scenario {scenario_name!r}; available: {available}") from error
-    dt, t_end = float(scenario["dt_s"]), float(scenario["t_end_s"])
-    if dt <= 0 or t_end <= 0:
-        raise ValueError("RMS scenario dt_s and t_end_s must be positive.")
-    state, devices = initialize_rms(operating_point, rms_config)
-    loads = dict(operating_point.load_pq)
-    commands = dict(operating_point.der_pq)
-    current_result = PFResult(True, state.bus_voltages, tuple(), tuple(), {"converged": True}, 0, state.pf_state or PFState())
-    voltage_rows: list[dict[str, Any]] = []
-    summary_rows: list[dict[str, Any]] = []
-    # Solve at t=0 too: this checks that the persisted QSTS operating point can be re-applied.
-    initial_op = OperatingPoint(operating_point.time_index, loads, commands, {"rms_time_s": 0.0})
-    current_result = solver.solve(initial_op, state.pf_state, SolverContext(time_step_hours=dt / 3600.0))
-    state = RMSState(0.0, current_result.bus_voltages, state.device_states, current_result.next_state)
-    rows, summary = _result_rows(0.0, current_result, state.device_states, "")
-    voltage_rows.extend(rows); summary_rows.append(summary)
-
-    events = list(scenario.get("events", []))
+def run_rms(solver: PowerFlowSolver, network: NetworkModel, operating_point: DynamicOperatingPoint, rms_config: Mapping[str, Any], scenario_name: str) -> RMSResult:
+    if scenario_name not in rms_config["scenarios"]:
+        raise ValueError(f"Unknown RMS scenario {scenario_name!r}.")
+    scenario = rms_config["scenarios"][scenario_name]
+    dt, end = float(scenario["dt_s"]), float(scenario["t_end_s"])
+    if dt <= 0 or end <= 0: raise ValueError("dt_s and t_end_s must be positive.")
+    state, devices = initialize_rms(operating_point, rms_config, network)
+    loads, commands = dict(operating_point.load_pq), dict(operating_point.der_pq)
+    result = solver.solve(OperatingPoint(operating_point.time_index, loads, commands, {"rms_time_s": 0}), state.pf_state, SolverContext())
+    state = RMSState(0, result.bus_voltages, state.device_states, result.next_state)
+    voltage_rows, summary_rows = [], []
+    rows, summary = _rows(0, result, state.device_states, devices, ""); voltage_rows.extend(rows); summary_rows.append(summary)
     applied: set[int] = set()
-    for step in range(1, ceil(t_end / dt) + 1):
-        time_s = min(step * dt, t_end)
-        event_labels = _apply_events(events, applied, time_s, loads, devices)
+    for step in range(1, ceil(end / dt) + 1):
+        time_s = min(step * dt, end)
+        labels = _events(scenario.get("events", []), applied, time_s, loads, devices)
         new_states: dict[str, dict[str, float]] = {}
-        for device_id, device in devices.items():
-            old_state = state.device_states[device_id]
-            derivative = device.derivative(old_state)
-            new_states[device_id] = {key: float(old_state[key]) + (time_s - state.time) * value for key, value in derivative.items()}
-            commands[device_id] = device.injection(new_states[device_id], operating_point.der_pq[device_id])
-        pf_op = OperatingPoint(operating_point.time_index, loads, commands, {"rms_time_s": time_s, "scenario": scenario_name})
-        current_result = solver.solve(pf_op, state.pf_state, SolverContext(time_step_hours=(time_s - state.time) / 3600.0, previous_result=current_result))
-        state = RMSState(time_s, current_result.bus_voltages, new_states, current_result.next_state)
-        rows, summary = _result_rows(time_s, current_result, new_states, ";".join(event_labels))
-        voltage_rows.extend(rows); summary_rows.append(summary)
+        for name, device in devices.items():
+            voltage, angle = _bus_voltage(state.bus_voltages, device.bus)
+            old, derivative = state.device_states[name], device.derivative(state.device_states[name], voltage, angle)
+            new_states[name] = dict(old)
+            for key, value in derivative.items(): new_states[name][key] = float(old[key]) + (time_s - state.time) * value
+            commands[name] = device.injection(new_states[name], voltage, operating_point.der_pq[name])
+        result = solver.solve(OperatingPoint(operating_point.time_index, loads, commands, {"rms_time_s": time_s, "scenario": scenario_name}), state.pf_state, SolverContext(time_step_hours=(time_s - state.time) / 3600, previous_result=result))
+        state = RMSState(time_s, result.bus_voltages, new_states, result.next_state)
+        rows, summary = _rows(time_s, result, new_states, devices, ";".join(labels)); voltage_rows.extend(rows); summary_rows.append(summary)
     return RMSResult(pd.DataFrame(summary_rows), pd.DataFrame(voltage_rows), state)

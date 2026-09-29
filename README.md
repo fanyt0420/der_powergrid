@@ -293,31 +293,89 @@ DER profiles → QSTS → saved PFResult-equivalent data → RMS initialization 
 
 ### RMS 模型与边界
 
-第一阶段仅实现 `first_order_pq` 设备模型：
+当前提供三种标幺化的动态设备模型，共用统一 `RMSDevice` 接口：`initialize()`（以 QSTS 断面初始化状态）、`derivative()`（返回状态方程右端）、`injection()`（由状态生成注入网络的 P/Q 命令）与 `metrics()`（输出观测指标）。三种模型仅通过“标幺目标功率 → 内部状态方程 → 注入网络的 P/Q 命令”交互，不修改网络拓扑；设备额定功率 `rating_kw` 取自 `network.json` 的 `p_rated_kw`，标称频率取自 `rms_config.json` 的 `nominal_frequency_hz`（缺失时回退 `network.json` 的 `base.frequency_hz`，默认 60 Hz）。
+
+| 模型 | 类型 | 关键状态 |
+| --- | --- | --- |
+| `aggregate_der` | 聚合 DER（一阶 P/Q 跟踪 + 无功电压支撑） | \(p_{out},q_{out},p_{meas},q_{meas},V_{ref}\) |
+| `gfl_inverter` | 跟网型逆变器（GFL） | \(p_f,q_f,i_d,i_q,\theta_{pll},\int\varepsilon\) |
+| `gfm_inverter` | 构网型逆变器（GFM） | \(p_{out},q_{out},p_{meas},q_{meas},\Delta f,\theta,V_{int},V_{ref}\) |
+
+所有功率均为以各自设备 `p_rated_kw` 为基值的标幺值；\(V_{bus}\) 为设备接入母线的正序电压幅值，\(\theta_{bus}\) 为正序电压相角（由三相相电压经对称分量法提取，见 `_bus_voltage()`）。每个模型都带一个圆形电流限幅，由参数 `current_limit_pu` 给出：当视在电流 \(|S|/V_{bus}\) 超过限值时，按比例缩减 P、Q（见 `_clip_current()`）。
+
+#### `aggregate_der`（聚合 DER）
+
+一阶 P/Q 跟踪、无功电压支撑和测量低通。记标幺目标为 \(p_{ref},q_{ref}\)：
 
 \[
-\tau_P \dot P=P^{ref}-P,\qquad \tau_Q \dot Q=Q^{ref}-Q.
+\begin{aligned}
+q_{ref} &\leftarrow q_{ref}+k_{v}(V_{ref}-V_{bus}), \\
+(p_{ref},q_{ref}) &\leftarrow \mathrm{clip}(p_{ref},q_{ref}), \\
+\tau_p \dot p_{out}&=p_{ref}-p_{out},\qquad \tau_q \dot q_{out}=q_{ref}-q_{out}, \\
+\tau_m \dot p_{meas}&=p_{out}-p_{meas},\qquad \tau_m \dot q_{meas}=q_{out}-q_{meas}.
+\end{aligned}
 \]
 
-初始化时严格采用 QSTS 断面：\(P(0)=P^\star\)、\(Q(0)=Q^\star\)、\(V(0)=V^\star\)。每个秒级步长以显式 Euler 推进 DER 的 P/Q 状态，然后通过 `PowerFlowSolver.solve()` 重解网络代数方程。因此当前版本是“动态设备状态 + 准稳态网络代数求解”的 RMS 验证框架，不是完整的电磁暂态或 GFL/GFM DAE 求解器。后续可保留 `RMSDevice.initialize()/derivative()/injection()` 接口，替换为 GFL、GFM、DER_A 或同步机模型，并替换网络代数求解部分。
+其中 \(k_{v}\) 即 `voltage_support_pu_per_pu`（可选，默认 0），\(\mathrm{clip}\) 为上述圆形电流限幅。注入命令由 \(p_{out},q_{out}\) 再经一次限幅后乘以 \(p_{rated}\) 得到。
 
-`RMSState` 保存当前秒级时间、设备动态状态 \(x\)、母线复电压 \(z\) 及潮流 warm-start 状态；`RMSResult` 返回时序汇总表、母线相电压表和最终状态。RMS 编排不依赖 `OpenDSSSolver` 的具体类，只依赖 `PowerFlowSolver`，当前入口选择 OpenDSS 后端。
+#### `gfl_inverter`（跟网型逆变器）
+
+包含 SRF-PLL、P/Q 外环、电流内环与限流。记 PLL 相角误差 \(\varepsilon=\sin(\theta_{bus}-\theta_{pll})\)，频率偏差 \(\Delta f=k_p^{pll}\varepsilon+k_i^{pll}\int\varepsilon\)：
+
+\[
+\begin{aligned}
+\tau_p \dot p_f &= p_{ref}-p_f,\qquad \tau_q \dot q_f=q_{ref}-q_f, \\
+(i_{d,ref},i_{q,ref}) &= \mathrm{clip}\bigl(p_f/V_{bus},\,q_f/V_{bus}\bigr), \\
+\tau_i \dot i_d &= i_{d,ref}-i_d,\qquad \tau_i \dot i_q=i_{q,ref}-i_q, \\
+\dot\theta_{pll} &= 2\pi\,\Delta f,\qquad \frac{d}{dt}\int\varepsilon=\varepsilon.
+\end{aligned}
+\]
+
+注入命令由 \(i_d,i_q\) 经电压还原为功率并限幅后乘以 \(p_{rated}\)。`metrics()` 输出 \(f_{nom}+\Delta f\)。
+
+#### `gfm_inverter`（构网型逆变器）
+
+包含虚拟惯量摆动方程、P-f/Q-V 下垂和电压内环。记频率偏差 \(\Delta f\)，下垂命令：
+
+\[
+\begin{aligned}
+p_{cmd}&=p_{ref}-k_{pf}\Delta f,\qquad q_{cmd}=q_{ref}+k_{qv}(V_{ref}-V_{bus}), \\
+(p_{cmd},q_{cmd}) &\leftarrow \mathrm{clip}(p_{cmd},q_{cmd}), \\
+2H\,\dot{\Delta f} &= p_{ref}-p_{meas}-D\,\Delta f,\qquad \dot\theta=2\pi\,\Delta f, \\
+\tau_p \dot p_{out} &= p_{cmd}-p_{out},\qquad \tau_p \dot q_{out}=q_{cmd}-q_{out}, \\
+\tau_m \dot p_{meas} &= p_{out}-p_{meas},\qquad \tau_m \dot q_{meas}=q_{out}-q_{meas}, \\
+V_{tgt}&=V_{ref}+k_{vq}(q_{ref}-q_{meas}),\qquad \tau_v \dot V_{int}=V_{tgt}-V_{int}.
+\end{aligned}
+\]
+
+其中 \(k_{pf}\)、\(k_{qv}\)、\(H\)、\(D\)、\(k_{vq}\) 分别对应 `p_droop_pu_per_hz`、`q_droop_pu_per_pu`、`inertia_s`、`damping_pu_per_hz`、`voltage_droop_pu_per_pu`（可选，默认 0）。注入命令由 \(p_{out},q_{out}\) 限流后乘以 \(p_{rated}\)。`metrics()` 输出 \(f_{nom}+\Delta f\) 与 \(V_{int}\)。
+
+#### 数值推进与网络求解
+
+初始化严格采用 QSTS 断面：\(P(0)=P^\star\)、\(Q(0)=Q^\star\)、\(V(0)=V^\star\)。每个秒级步长先按显式 Euler 推进各设备的内部状态，再由 `injection()` 得到其注入网络的 P/Q，随后通过 `PowerFlowSolver.solve()` 重解网络代数方程，用得到的母线电压推进下一步。因此当前版本是“动态设备状态 + 准稳态网络代数求解”的 RMS 验证框架，不是电磁暂态仿真。后续可保留 `RMSDevice` 接口，替换为更完整的 GFL/GFM/DER_A 或同步机模型，并替换网络代数求解部分。
+
+`RMSState` 保存当前秒级时间、设备动态状态 \(x\)、母线复电压 \(z\) 及潮流 warm-start 状态；`RMSResult` 返回时序汇总表、母线相电压表和最终状态。RMS 编排不依赖 `OpenDSSSolver` 的具体类、只依赖 `PowerFlowSolver`，当前入口选择 OpenDSS 后端。
 
 ### `rms_config.json`
 
-该文件只补充 QSTS 中不存在的动态信息。`device_id` 必须引用既有 `network.json` 中的 DER，不能重复定义接入母线、额定功率或 QSTS 时序。例如 12 节点算例配置了所有 DER 的一阶时间常数，以及三个场景：
+该文件只补充 QSTS 中不存在的动态信息。`device_id` 必须引用既有 `network.json` 中的 DER，不能重复定义接入母线、额定功率或 QSTS 时序；`model_type` 必须是上述三种之一，且每台动态设备还需给出 `current_limit_pu`。例如 12 节点算例为全部五台 DER 配置了动态参数和三个场景：
 
 ```json
 {
+  "nominal_frequency_hz": 60.0,
   "dynamic_devices": [
-    {"device_id": "PV1", "model_type": "first_order_pq", "tau_p_s": 0.2, "tau_q_s": 0.1}
+    {"device_id": "PV1", "model_type": "gfl_inverter", "current_limit_pu": 1.25, "pll_kp_hz_per_rad": 12.0, "pll_ki_hz_per_rad_s": 180.0, "tau_p_control_s": 0.08, "tau_q_control_s": 0.06, "tau_current_s": 0.015},
+    {"device_id": "PV2", "model_type": "gfm_inverter", "current_limit_pu": 1.25, "inertia_s": 1.5, "damping_pu_per_hz": 0.25, "p_droop_pu_per_hz": 0.08, "q_droop_pu_per_pu": 2.0, "voltage_droop_pu_per_pu": 0.5, "tau_power_control_s": 0.08, "tau_power_measure_s": 0.04, "tau_voltage_control_s": 0.05},
+    {"device_id": "Wind1", "model_type": "aggregate_der", "current_limit_pu": 1.20, "tau_p_control_s": 0.25, "tau_q_control_s": 0.15, "tau_measure_s": 0.05, "voltage_support_pu_per_pu": 1.0},
+    {"device_id": "BESS1", "model_type": "gfl_inverter", "current_limit_pu": 1.30, "pll_kp_hz_per_rad": 10.0, "pll_ki_hz_per_rad_s": 150.0, "tau_p_control_s": 0.10, "tau_q_control_s": 0.08, "tau_current_s": 0.02},
+    {"device_id": "EV1", "model_type": "aggregate_der", "current_limit_pu": 1.10, "tau_p_control_s": 0.30, "tau_q_control_s": 0.20, "tau_measure_s": 0.10, "voltage_support_pu_per_pu": 0.0}
   ],
   "scenarios": {
     "flat_run": {"dt_s": 0.02, "t_end_s": 2.0, "events": []},
     "load_step": {
       "dt_s": 0.02,
       "t_end_s": 2.0,
-      "events": [{"time_s": 1.0, "type": "load_scale", "device_id": "Load12", "p_multiplier": 1.1, "q_multiplier": 1.1}]
+      "events": [{"time_s": 1.0, "type": "load_scale", "device_id": "Load12", "p_multiplier": 1.10, "q_multiplier": 1.10}]
     },
     "der_trip": {
       "dt_s": 0.02,
@@ -328,7 +386,7 @@ DER profiles → QSTS → saved PFResult-equivalent data → RMS initialization 
 }
 ```
 
-`load_scale` 立即改变指定基础负荷的 P/Q；`der_trip` 将指定动态 DER 的 \(P^{ref},Q^{ref}\) 设为零，实际 P/Q 按其时间常数衰减。
+`load_scale` 在指定时刻立即把该基础负荷的 P/Q 乘以 `p_multiplier`、`q_multiplier`；`der_trip` 在指定时刻调用该动态 DER 的 `trip()`，把其 \(P^{ref},Q^{ref}\) 目标置零，实际注入功率随后按其时间常数衰减到零。
 
 ### 运行 RMS
 
@@ -343,7 +401,7 @@ python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus
 
 默认输出目录是 `output/<case>/rms/<scenario>/`：
 
-- `rms_summary.csv`：每个秒级时刻的扰动标签、潮流迭代数、最小/最大电压、网损、源侧 P/Q 及每台动态 DER 的实际 P/Q；
+- `rms_summary.csv`：每个秒级时刻的扰动标签、潮流内部迭代次数、最小/最大电压、网损、源侧 P/Q，以及每台动态 DER 的实际注入 P/Q 与其内部状态/指标（列名形如 `<device_id 小写>_p_kw`、`<device_id 小写>_p_filter_pu`、`<device_id 小写>_frequency_hz` 等）；
 - `rms_bus_voltages.csv`：每时刻、每母线相的电压幅值和相角；
 - `rms_initialization.json`：选用的 QSTS 小时、初始 DER P/Q 和慢状态，便于复现工作点。
 
