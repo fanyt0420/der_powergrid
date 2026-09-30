@@ -75,7 +75,7 @@ def dss_text() -> str:
     lines = ["Clear", "Set DefaultBaseFrequency=60", "New Circuit.Radial12Bus basekv=12.47 pu=1.0 phases=3 bus1=source", "New LineCode.MAIN nphases=3 BaseFreq=60 units=km", "~ rmatrix=[0.16 | 0.02 0.16 | 0.02 0.02 0.16]", "~ xmatrix=[0.12 | 0.04 0.12 | 0.04 0.04 0.12]"]
     lines += [f"New Line.L{i} phases=3 bus1={start}.1.2.3 bus2={end}.1.2.3 linecode=MAIN length={length} units=km" for i, (start, end, length) in enumerate(EDGES, 1)]
     lines += [f"New Load.Load{i} phases=3 bus1=b{i}.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0" for i in range(1, 13)]
-    lines += ["New Generator.PV1 phases=3 bus1=b4.1.2.3 kV=12.47 kW=0 kvar=0 model=1", "New Generator.PV2 phases=3 bus1=b10.1.2.3 kV=12.47 kW=0 kvar=0 model=1", "New Generator.Wind1 phases=3 bus1=b7.1.2.3 kV=12.47 kW=0 kvar=0 model=1", "New Storage.BESS1 phases=3 bus1=b6.1.2.3 kV=12.47 kWrated=80 kWhrated=500 %stored=55 %reserve=20 %EffCharge=95 %EffDischarge=95 kW=0 kvar=0 dispmode=DEFAULT", "New Load.EV1 phases=3 bus1=b12.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0", "Set VoltageBases=[12.47]", "CalcVoltageBases", "Set MaxIterations=100", "Solve"]
+    lines += ["New Generator.PV1 phases=3 bus1=b4.1.2.3 kV=12.47 kW=0 kvar=0 model=1", "New Generator.PV2 phases=3 bus1=b10.1.2.3 kV=12.47 kW=0 kvar=0 model=1", "New Generator.Wind1 phases=3 bus1=b7.1.2.3 kV=12.47 kW=0 kvar=0 model=1", "New Storage.BESS1 phases=3 bus1=b6.1.2.3 kV=12.47 kWrated=80 kWhrated=500 %stored=55 %reserve=20 %EffCharge=95 %EffDischarge=95 kW=0 kvar=0 dispmode=EXTERNAL", "New Load.EV1 phases=3 bus1=b12.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0", "Set VoltageBases=[12.47]", "CalcVoltageBases", "Set MaxIterations=100", "Solve"]
     return "\n".join(lines) + "\n"
 
 

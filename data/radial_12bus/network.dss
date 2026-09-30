@@ -31,7 +31,7 @@ New Load.Load12 phases=3 bus1=b12.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0
 New Generator.PV1 phases=3 bus1=b4.1.2.3 kV=12.47 kW=0 kvar=0 model=1
 New Generator.PV2 phases=3 bus1=b10.1.2.3 kV=12.47 kW=0 kvar=0 model=1
 New Generator.Wind1 phases=3 bus1=b7.1.2.3 kV=12.47 kW=0 kvar=0 model=1
-New Storage.BESS1 phases=3 bus1=b6.1.2.3 kV=12.47 kWrated=80 kWhrated=500 %stored=55 %reserve=20 %EffCharge=95 %EffDischarge=95 kW=0 kvar=0 dispmode=DEFAULT
+New Storage.BESS1 phases=3 bus1=b6.1.2.3 kV=12.47 kWrated=80 kWhrated=500 %stored=55 %reserve=20 %EffCharge=95 %EffDischarge=95 kW=0 kvar=0 dispmode=EXTERNAL
 New Load.EV1 phases=3 bus1=b12.1.2.3 conn=wye model=1 kV=12.47 kW=0 kvar=0
 Set VoltageBases=[12.47]
 CalcVoltageBases

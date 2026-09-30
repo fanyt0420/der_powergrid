@@ -52,8 +52,12 @@ class OpenDSSSolver:
             elements.Name, elements.kW, elements.kvar = name, command.p_kw, command.q_kvar
         elif kind == "bess":
             state = "Charging" if command.p_kw < 0 else "Discharging" if command.p_kw > 0 else "Idling"
+            # OpenDSS Storage uses the opposite active-power convention from a
+            # Load: positive kW discharges into the grid and negative kW charges.
+            # Keep the signed QSTS command; abs(p_kw) would turn a charge request
+            # into a discharge request.
+            dss(f"Storage.{name}.kW={command.p_kw}")
             dss(f"Storage.{name}.State={state}")
-            dss(f"Storage.{name}.kW={abs(command.p_kw)}")
             dss(f"Storage.{name}.kvar={command.q_kvar}")
             if "soc_pct" in command.parameters:
                 dss(f"Storage.{name}.%stored={float(command.parameters['soc_pct'])}")
@@ -74,7 +78,6 @@ class OpenDSSSolver:
         relaxation = context.relaxation
 
         commands: dict[str, DERCommand] = dict(operating_point.der_commands)
-        self._set_der_commands(commands)
 
         solution = dss.ActiveCircuit.Solution
         pf_solve_count = 0
@@ -83,6 +86,11 @@ class OpenDSSSolver:
 
         def solve_once() -> None:
             nonlocal pf_solve_count, pf_iterations_total, pf_iterations_last
+            # A control iteration is an algebraic fixed-point iteration, not a
+            # physical time advance. Reapply *every* DER command before every
+            # OpenDSS solve so stateful elements (especially Storage) are frozen
+            # at the same QSTS operating point while Volt-VAR commands change.
+            self._set_der_commands(commands)
             solution.Solve()
             if not solution.Converged:
                 raise RuntimeError(f"OpenDSS power flow did not converge at timestamp {operating_point.time}.")
@@ -124,10 +132,7 @@ class OpenDSSSolver:
             if control_iterations > max_control_iterations:
                 raise RuntimeError(f"DER controls did not converge at timestamp {operating_point.time}.")
             # 关键：只要任意一个 Volt-VAR DER 未收敛，所有 Volt-VAR DER 同步更新
-            for name, command in new_commands.items():
-                if commands[name].controller_type == "volt_var":
-                    commands[name] = command
-                    self._set_der_command(name, command)
+            commands = new_commands
             solve_once()
 
         voltage_records, voltages = self._bus_voltage_records()
