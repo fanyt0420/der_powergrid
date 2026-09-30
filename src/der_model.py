@@ -29,19 +29,16 @@ class DERModel(ABC):
     def __init__(
         self,
         name: str,
-        element_type: str,
         profile_file: Optional[str | Path] = None,
         bus_name: Optional[str] = None,
     ):
         """Initialize DER model.
 
         Args:
-            name: Name of the DER element in OpenDSS (e.g., "PV1", "Wind1")
-            element_type: OpenDSS element type ("Generator", "Storage", "PVSystem", etc.)
+            name: Name of the DER device (e.g., "PV1", "Wind1")
             profile_file: Optional path to time-series profile CSV
         """
         self.name = name
-        self.element_type = element_type
         self.profile_file = Path(profile_file) if profile_file else None
         self.bus_name = bus_name
         self._profile_data: Optional[pd.DataFrame] = None
@@ -73,21 +70,10 @@ class DERModel(ABC):
         """
         pass
 
-    @abstractmethod
-    def apply_to_opendss(self, dss_interface: Any, injection: Dict[str, float]) -> None:
-        """Apply injection values to OpenDSS model.
-
-        Args:
-            dss_interface: OpenDSS interface object (e.g., dss.ActiveCircuit)
-            injection: Injection values from get_injection()
-        """
-        pass
-
     def get_metadata(self) -> Dict[str, Any]:
         """Get metadata about this DER model."""
         return {
             "name": self.name,
-            "element_type": self.element_type,
             "has_profile": self._profile_data is not None,
             "bus_name": self.bus_name,
         }
@@ -174,7 +160,7 @@ class PVModel(DERModel):
     """Photovoltaic generation model."""
 
     def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
-        super().__init__(name, "Generator", profile_file, bus_name)
+        super().__init__(name, profile_file, bus_name)
 
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
@@ -199,37 +185,12 @@ class PVModel(DERModel):
 
         return {"p_kw": pv_kw, "q_kvar": q_kvar, **self._controller_fields(row)}
 
-    def apply_to_opendss(self, dss_interface: Any, injection: Dict[str, float]) -> None:
-        """Apply PV generation to OpenDSS Generator element."""
-        generators = dss_interface.Generators
-
-        if generators.Count == 0:
-            if abs(injection["p_kw"]) > 1e-12:
-                raise RuntimeError(
-                    "The selected feeder has no Generator object. "
-                    f"Cannot apply PV generation for {self.name}."
-                )
-            return
-
-        names = [name.lower() for name in generators.AllNames]
-        if self.name.lower() not in names:
-            if abs(injection["p_kw"]) > 1e-12:
-                raise RuntimeError(
-                    f"Generator.{self.name} not found. "
-                    f"Available generators: {names}"
-                )
-            return
-
-        generators.Name = self.name
-        generators.kW = float(injection["p_kw"])
-        generators.kvar = float(injection["q_kvar"])
-
 
 class WindModel(DERModel):
     """Wind turbine generation model."""
 
     def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
-        super().__init__(name, "Generator", profile_file, bus_name)
+        super().__init__(name, profile_file, bus_name)
 
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
@@ -250,19 +211,6 @@ class WindModel(DERModel):
 
         return {"p_kw": wind_kw, "q_kvar": q_kvar, **self._controller_fields(row)}
 
-    def apply_to_opendss(self, dss_interface: Any, injection: Dict[str, float]) -> None:
-        """Apply wind generation to OpenDSS Generator element."""
-        generators = dss_interface.Generators
-
-        if generators.Count == 0 or self.name.lower() not in [n.lower() for n in generators.AllNames]:
-            if abs(injection["p_kw"]) > 1e-12:
-                raise RuntimeError(f"Generator.{self.name} not found for wind turbine.")
-            return
-
-        generators.Name = self.name
-        generators.kW = float(injection["p_kw"])
-        generators.kvar = float(injection["q_kvar"])
-
 
 class BESSModel(DERModel):
     """Battery Energy Storage System model."""
@@ -278,7 +226,7 @@ class BESSModel(DERModel):
         charge_efficiency: float = 0.95,
         discharge_efficiency: float = 0.95,
     ):
-        super().__init__(name, "Storage", profile_file, bus_name)
+        super().__init__(name, profile_file, bus_name)
         self._soc = initial_soc
         self.capacity_kwh = capacity_kwh
         self.reserve_soc = reserve_soc
@@ -333,55 +281,12 @@ class BESSModel(DERModel):
     def state_summary(self) -> Dict[str, float]:
         return {f"{self.name.lower()}_soc_pct": self._soc}
 
-    def apply_to_opendss(self, dss_interface: Any, injection: Dict[str, float]) -> None:
-        """Apply BESS operation to OpenDSS Storage element.
-
-        Note: OpenDSS Storage elements use different property names than Generators.
-        We need to use the DSS command interface to set kW for Storage elements.
-        """
-        from dss import dss
-
-        storages = dss_interface.Storages
-
-        if storages.Count == 0 or self.name.lower() not in [n.lower() for n in storages.AllNames]:
-            if abs(injection["p_kw"]) > 1e-12:
-                raise RuntimeError(f"Storage.{self.name} not found for BESS.")
-            return
-
-        # Set the active storage element
-        storages.Name = self.name
-
-        # Use DSS command interface to set Storage properties
-        # Storage elements require State property to be set for charge/discharge
-        p_kw = float(injection["p_kw"])
-        q_kvar = float(injection["q_kvar"])
-
-        if p_kw < 0:
-            # Charging mode (negative power)
-            dss(f"Storage.{self.name}.State=Charging")
-            dss(f"Storage.{self.name}.kW={abs(p_kw)}")
-        elif p_kw > 0:
-            # Discharging mode (positive power)
-            dss(f"Storage.{self.name}.State=Discharging")
-            dss(f"Storage.{self.name}.kW={abs(p_kw)}")
-        else:
-            # Idle mode
-            dss(f"Storage.{self.name}.State=Idling")
-            dss(f"Storage.{self.name}.kW=0")
-
-        # Set reactive power
-        dss(f"Storage.{self.name}.kvar={q_kvar}")
-
-        # Set state of charge if provided
-        if "soc" in injection:
-            dss(f"Storage.{self.name}.%stored={injection['soc']}")
-
 
 class EVModel(DERModel):
     """Electric Vehicle charging model."""
 
     def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
-        super().__init__(name, "Load", profile_file, bus_name)
+        super().__init__(name, profile_file, bus_name)
 
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
@@ -405,17 +310,3 @@ class EVModel(DERModel):
         q_kvar = float(row.get("ev_kvar", 0.0))
 
         return {"p_kw": ev_kw, "q_kvar": q_kvar, **self._controller_fields(row)}
-
-    def apply_to_opendss(self, dss_interface: Any, injection: Dict[str, float]) -> None:
-        """Apply EV charging to OpenDSS Load element."""
-        loads = dss_interface.Loads
-
-        names = [name.lower() for name in loads.AllNames]
-        if self.name.lower() not in names:
-            if abs(injection["p_kw"]) > 1e-12:
-                raise RuntimeError(f"Load.{self.name} not found for EV charging.")
-            return
-
-        loads.Name = self.name
-        loads.kW = float(injection["p_kw"])
-        loads.kvar = float(injection["q_kvar"])

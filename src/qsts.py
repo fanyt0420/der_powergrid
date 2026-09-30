@@ -21,7 +21,7 @@ def run_qsts(
     der_models: Sequence[DERModel],
     load_profile_file: str | Path,
     max_control_iterations: int = 20,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run QSTS through a backend-neutral PowerFlowSolver.
 
     Time is taken from the ``timestamp`` column of the load profile rather than a
@@ -45,6 +45,7 @@ def run_qsts(
 
     voltage_rows: list[dict] = []
     system_rows: list[dict] = []
+    branch_rows: list[dict] = []
     pf_state: PFState | None = None
 
     for index, ts in enumerate(timestamps):
@@ -97,6 +98,7 @@ def run_qsts(
 
         ts_text = _ts_str(ts)
         voltage_rows.extend({"timestamp": ts_text, **record} for record in result.bus_voltage_records)
+        branch_rows.extend({"timestamp": ts_text, **record} for record in result.branch_records)
         injection_summary = {
             f"{name.lower()}_{quantity}": getattr(command, quantity)
             for name, command in commands.items()
@@ -115,4 +117,4 @@ def run_qsts(
             **state_summary,
         })
 
-    return pd.DataFrame(voltage_rows), pd.DataFrame(system_rows)
+    return pd.DataFrame(voltage_rows), pd.DataFrame(system_rows), pd.DataFrame(branch_rows)

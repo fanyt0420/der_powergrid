@@ -41,14 +41,7 @@ output/
 pip install -r requirements.txt
 ```
 
-生成并运行三节点算例：
-
-```powershell
-python data\generate_data\three_node.py
-python run.py --data-dir data\three_node
-```
-
-生成并运行更复杂的多支路算例：
+生成并运行多支路算例：
 
 ```powershell
 python data\generate_data\radial_12bus.py
@@ -146,7 +139,8 @@ BESS 的 SOC 为跨时段显式状态；其容量、初始 SOC、SOC 下限和�
 每个算例输出目录包含：
 
 - `qsts_bus_voltages.csv`：每时刻、每母线相别的电压幅值和相角；
-- `qsts_system.csv`：总负荷、外层控制迭代次数、潮流内部迭代次数、电压范围、损耗、源端功率、最终 DER P/Q 和 BESS SOC。
+- `qsts_system.csv`：总负荷、外层控制迭代次数、潮流内部迭代次数、电压范围、损耗、源端功率、最终 DER P/Q 和 BESS SOC；
+- `qsts_branch_results.csv`：每时刻、每条支路的电流幅值和首端 P/Q（由求解器的 `branch_records` 保存）。
 
 ## DER 模块详解
 
@@ -176,12 +170,18 @@ class DERModel:
 
 ### 当前 DER 类型
 
-| 模型 | OpenDSS 元件 | P 的符号 | 控制类型 | 跨时段状态 |
-| --- | --- | --- | --- | --- |
-| `PVModel` | `Generator` | 正值为发电 | `volt_var` 或 `constant_pq` | 无 |
-| `WindModel` | `Generator` | 正值为发电 | `constant_pq` | 无 |
-| `BESSModel` | `Storage` | 正值放电、负值充电 | `soc_schedule` | SOC |
-| `EVModel` | `Load` | 正值为充电负荷 | `constant_pq` | 无 |
+| 模型 | P 的符号 | 控制类型 | 跨时段状态 |
+| --- | --- | --- | --- |
+| `PVModel` | 正值为发电 | `volt_var` 或 `constant_pq` | 无 |
+| `WindModel` | 正值为发电 | `constant_pq` | 无 |
+| `BESSModel` | 正值放电、负值充电 | `soc_schedule` | SOC |
+| `EVModel` | 正值为充电负荷 | `constant_pq` | 无 |
+
+DER 模型本身与求解器后端解耦，不包含 OpenDSS 元件概念；`kind`（`pv`/`wind`/`bess`/`ev`）映射到哪种 OpenDSS 元件（`Generator`/`Storage`/`Load`）由 `OpenDSSSolver._set_der_command()` 决定。数据流统一为：
+
+```text
+DER 数据/状态/控制 → DERCommand → PowerFlowSolver → OpenDSS / 自研求解器
+```
 
 DER 设备的名称、种类、接入母线、额定功率、储能容量和 profile 文件均由 `network.json` 的 `devices` 读取。例如：
 

@@ -68,9 +68,10 @@ def main() -> None:
     solver.build(network)
     der_models = build_der_models(network, data_dir)
 
-    qsts_bus, qsts_system = run_qsts(solver, der_models, data_dir / "load_profiles.csv")
+    qsts_bus, qsts_system, qsts_branches = run_qsts(solver, der_models, data_dir / "load_profiles.csv")
     qsts_bus.to_csv(output_dir / "qsts_bus_voltages.csv", index=False)
     qsts_system.to_csv(output_dir / "qsts_system.csv", index=False)
+    qsts_branches.to_csv(output_dir / "qsts_branch_results.csv", index=False)
     print(f"QSTS completed for case: {data_dir.name}")
     print(f"Input data: {data_dir}")
     print(f"Results: {output_dir.resolve()}")
