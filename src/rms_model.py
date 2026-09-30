@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from cmath import exp, phase, rect
 from dataclasses import dataclass, field
+from datetime import datetime
 import json
 from math import ceil, pi, radians, sin
 from pathlib import Path
@@ -17,7 +18,7 @@ from src.power_flow import DERCommand, NetworkModel, OperatingPoint, PFResult, P
 
 @dataclass(frozen=True)
 class DynamicOperatingPoint:
-    time_index: int
+    time: datetime
     bus_voltages: Mapping[str, complex]
     load_pq: Mapping[str, complex]
     der_pq: Mapping[str, DERCommand]
@@ -185,20 +186,26 @@ def load_rms_config(path: str | Path) -> dict[str, Any]:
     return config
 
 
-def load_qsts_operating_point(data_dir: str | Path, qsts_output_dir: str | Path, hour: int, network: NetworkModel | None = None) -> DynamicOperatingPoint:
+def _ts_str(ts: str | datetime) -> str:
+    """Normalize a timestamp to the ``YYYY-MM-DD HH:MM:SS`` string form."""
+    return pd.Timestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def load_qsts_operating_point(data_dir: str | Path, qsts_output_dir: str | Path, time: str | datetime, network: NetworkModel | None = None) -> DynamicOperatingPoint:
     data_dir, qsts_output_dir = Path(data_dir), Path(qsts_output_dir)
     network = network or NetworkModel.from_json(data_dir / "network.json")
     loads_df, volts_df, system_df = pd.read_csv(data_dir / "load_profiles.csv"), pd.read_csv(qsts_output_dir / "qsts_bus_voltages.csv"), pd.read_csv(qsts_output_dir / "qsts_system.csv")
-    rows = system_df[system_df.hour == hour]
+    ts = _ts_str(time)
+    rows = system_df[system_df["timestamp"].astype(str) == ts]
     if len(rows) != 1:
-        raise ValueError(f"Expected one QSTS result row for hour {hour}, found {len(rows)}.")
+        raise ValueError(f"Expected one QSTS result row for timestamp {ts}, found {len(rows)}.")
     row = rows.iloc[0]
-    loads = {str(r.load_name): complex(float(r.p_kw), float(r.q_kvar)) for r in loads_df[loads_df.hour == hour].itertuples(index=False)}
+    loads = {str(r.load_name): complex(float(r.p_kw), float(r.q_kvar)) for r in loads_df[loads_df["timestamp"].astype(str) == ts].itertuples(index=False)}
     if set(loads) != network.base_load_names():
-        raise ValueError(f"Load data at hour {hour} does not match network.json.")
-    voltages = {f"{r.bus}.{int(r.node)}": rect(float(r.v_pu), radians(float(r.angle_deg))) for r in volts_df[volts_df.hour == hour].itertuples(index=False)}
+        raise ValueError(f"Load data at timestamp {ts} does not match network.json.")
+    voltages = {f"{r.bus}.{int(r.node)}": rect(float(r.v_pu), radians(float(r.angle_deg))) for r in volts_df[volts_df["timestamp"].astype(str) == ts].itertuples(index=False)}
     if not voltages:
-        raise ValueError(f"No QSTS bus voltage records at hour {hour}.")
+        raise ValueError(f"No QSTS bus voltage records at timestamp {ts}.")
     commands: dict[str, DERCommand] = {}
     slow_states: dict[str, dict[str, float]] = {}
     for device in network.devices:
@@ -213,7 +220,7 @@ def load_qsts_operating_point(data_dir: str | Path, qsts_output_dir: str | Path,
         if soc_col in row and not pd.isna(row[soc_col]):
             parameters["soc_pct"] = float(row[soc_col]); slow_states[name] = {"soc_pct": float(row[soc_col])}
         commands[name] = DERCommand(float(row[p_col]), float(row[q_col]), "qsts_final", parameters)
-    return DynamicOperatingPoint(hour, voltages, loads, commands, slow_states, {key: value for key, value in row.to_dict().items() if key != "hour"})
+    return DynamicOperatingPoint(pd.Timestamp(ts).to_pydatetime(), voltages, loads, commands, slow_states, {key: value for key, value in row.to_dict().items() if key != "timestamp"})
 
 
 def initialize_rms(operating_point: DynamicOperatingPoint, rms_config: Mapping[str, Any], network: NetworkModel) -> tuple[RMSState, dict[str, RMSDevice]]:
@@ -271,7 +278,7 @@ def run_rms(solver: PowerFlowSolver, network: NetworkModel, operating_point: Dyn
     if dt <= 0 or end <= 0: raise ValueError("dt_s and t_end_s must be positive.")
     state, devices = initialize_rms(operating_point, rms_config, network)
     loads, commands = dict(operating_point.load_pq), dict(operating_point.der_pq)
-    result = solver.solve(OperatingPoint(operating_point.time_index, loads, commands, {"rms_time_s": 0}), state.pf_state, SolverContext())
+    result = solver.solve(OperatingPoint(operating_point.time, loads, commands, {"rms_time_s": 0}), state.pf_state, SolverContext())
     state = RMSState(0, result.bus_voltages, state.device_states, result.next_state)
     voltage_rows, summary_rows = [], []
     rows, summary = _rows(0, result, state.device_states, devices, ""); voltage_rows.extend(rows); summary_rows.append(summary)
@@ -286,7 +293,7 @@ def run_rms(solver: PowerFlowSolver, network: NetworkModel, operating_point: Dyn
             new_states[name] = dict(old)
             for key, value in derivative.items(): new_states[name][key] = float(old[key]) + (time_s - state.time) * value
             commands[name] = device.injection(new_states[name], voltage, operating_point.der_pq[name])
-        result = solver.solve(OperatingPoint(operating_point.time_index, loads, commands, {"rms_time_s": time_s, "scenario": scenario_name}), state.pf_state, SolverContext(time_step_hours=(time_s - state.time) / 3600, previous_result=result))
+        result = solver.solve(OperatingPoint(operating_point.time, loads, commands, {"rms_time_s": time_s, "scenario": scenario_name}), state.pf_state, SolverContext(time_step_hours=(time_s - state.time) / 3600, previous_result=result))
         state = RMSState(time_s, result.bus_voltages, new_states, result.next_state)
         rows, summary = _rows(time_s, result, new_states, devices, ";".join(labels)); voltage_rows.extend(rows); summary_rows.append(summary)
     return RMSResult(pd.DataFrame(summary_rows), pd.DataFrame(voltage_rows), state)

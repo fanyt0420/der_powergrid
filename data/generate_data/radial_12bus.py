@@ -16,6 +16,8 @@ from topology_plot import plot_network_topology
 ROOT = Path(__file__).resolve().parents[2]
 CASE_DIR = ROOT / "data" / "radial_12bus"
 HOURS = list(range(24))
+START = pd.Timestamp("2026-01-01 00:00:00")
+STEP_SECONDS = 3600
 EDGES = [("source", "b1", 0.20), ("b1", "b2", 0.18), ("b2", "b3", 0.16), ("b3", "b4", 0.14), ("b2", "b5", 0.17), ("b5", "b6", 0.12), ("b5", "b7", 0.15), ("b1", "b8", 0.19), ("b8", "b9", 0.13), ("b9", "b10", 0.12), ("b8", "b11", 0.15), ("b11", "b12", 0.12)]
 Z_MATRIX = [[[0.16, 0.12], [0.02, 0.04], [0.02, 0.04]], [[0.02, 0.04], [0.16, 0.12], [0.02, 0.04]], [[0.02, 0.04], [0.02, 0.04], [0.16, 0.12]]]
 TOPOLOGY_POSITIONS = {
@@ -23,6 +25,19 @@ TOPOLOGY_POSITIONS = {
     "b5": (3, -1), "b6": (4, -1.6), "b7": (4, -0.5), "b8": (2, -3), "b9": (3, -3.6),
     "b10": (4, -3.6), "b11": (3, -2.4), "b12": (4, -2.4),
 }
+
+
+def timestamps() -> list[pd.Timestamp]:
+    return [START + pd.Timedelta(seconds=STEP_SECONDS * h) for h in HOURS]
+
+
+def simulation() -> dict:
+    ts = timestamps()
+    return {
+        "start_datetime": ts[0].strftime("%Y-%m-%d %H:%M:%S"),
+        "end_datetime": (ts[-1] + pd.Timedelta(seconds=STEP_SECONDS)).strftime("%Y-%m-%d %H:%M:%S"),
+        "step_seconds": STEP_SECONDS,
+    }
 
 
 def rms_config() -> dict:
@@ -53,7 +68,7 @@ def network() -> dict:
         {"id": "BESS1", "kind": "bess", "bus": "b6", "phases": [1, 2, 3], "p_rated_kw": 80, "energy_kwh": 500, "reserve_soc": 20, "initial_soc": 55, "profile_file": "der_profiles/bess1.csv"},
         {"id": "EV1", "kind": "ev", "bus": "b12", "phases": [1, 2, 3], "p_rated_kw": 90, "profile_file": "der_profiles/ev1.csv"},
     ]
-    return {"base": {"frequency_hz": 60, "base_kv_ll": 12.47, "slack_bus": "source"}, "buses": [{"id": "source", "phases": [1, 2, 3], "is_slack": True}] + [{"id": f"b{i}", "phases": [1, 2, 3]} for i in range(1, 13)], "branches": [{"id": f"L{i}", "from_bus": start, "to_bus": end, "phases": [1, 2, 3], "length_km": length, "z_ohm_per_km": Z_MATRIX} for i, (start, end, length) in enumerate(EDGES, 1)], "devices": devices}
+    return {"base": {"frequency_hz": 60, "base_kv_ll": 12.47, "slack_bus": "source"}, "simulation": simulation(), "buses": [{"id": "source", "phases": [1, 2, 3], "is_slack": True}] + [{"id": f"b{i}", "phases": [1, 2, 3]} for i in range(1, 13)], "branches": [{"id": f"L{i}", "from_bus": start, "to_bus": end, "phases": [1, 2, 3], "length_km": length, "z_ohm_per_km": Z_MATRIX} for i, (start, end, length) in enumerate(EDGES, 1)], "devices": devices}
 
 
 def dss_text() -> str:
@@ -72,20 +87,21 @@ def main() -> None:
     (CASE_DIR / "network.dss").write_text(dss_text(), encoding="utf-8")
     (CASE_DIR / "rms_config.json").write_text(json.dumps(rms_config(), indent=2), encoding="utf-8")
     plot_network_topology(case_network, CASE_DIR / "network_topology.png", TOPOLOGY_POSITIONS)
+    ts_text = [t.strftime("%Y-%m-%d %H:%M:%S") for t in timestamps()]
     shape = [0.55, 0.52, 0.50, 0.49, 0.50, 0.57, 0.68, 0.79, 0.87, 0.92, 0.96, 0.98, 1.0, 1.01, 1.03, 1.06, 1.10, 1.15, 1.20, 1.22, 1.16, 1.04, 0.84, 0.68]
     rows = []
     for hour in HOURS:
         for index in range(1, 13):
             base_kw, pf = 55 + 8 * (index % 6), 0.94 + 0.01 * (index % 3)
             p_kw = base_kw * shape[hour] * (1 + 0.08 * (((hour + index) % 5) - 2) / 2)
-            rows.append({"hour": hour, "load_name": f"Load{index}", "p_kw": round(p_kw, 3), "q_kvar": round(p_kw * (1 / pf**2 - 1) ** 0.5, 3)})
+            rows.append({"timestamp": ts_text[hour], "load_name": f"Load{index}", "p_kw": round(p_kw, 3), "q_kvar": round(p_kw * (1 / pf**2 - 1) ** 0.5, 3)})
     pd.DataFrame(rows).to_csv(CASE_DIR / "load_profiles.csv", index=False)
     def pv_file(name: str, rating: float, shift: int) -> None:
-        pd.DataFrame({"hour": HOURS, "pv_kw": [max(0, rating * (1 - abs(h - (12 + shift)) / 6)) for h in HOURS], "pv_kvar": 0.0, "controller_type": "volt_var", "q_limit_kvar": rating * 0.25, "v_ref_pu": 1.0, "droop_kvar_per_pu": rating * 3}).to_csv(profiles / name, index=False)
+        pd.DataFrame({"timestamp": ts_text, "pv_kw": [max(0, rating * (1 - abs(h - (12 + shift)) / 6)) for h in HOURS], "pv_kvar": 0.0, "controller_type": "volt_var", "q_limit_kvar": rating * 0.25, "v_ref_pu": 1.0, "droop_kvar_per_pu": rating * 3}).to_csv(profiles / name, index=False)
     pv_file("pv1.csv", 180, 0); pv_file("pv2.csv", 120, 1)
-    pd.DataFrame({"hour": HOURS, "wind_kw": [65 + 35 * ((h + 2) % 6) / 5 for h in HOURS], "wind_kvar": 0.0, "controller_type": "constant_pq"}).to_csv(profiles / "wind1.csv", index=False)
-    pd.DataFrame({"hour": HOURS, "bess_kw": [-45 if 10 <= h <= 15 else 35 for h in HOURS], "bess_kvar": 0.0, "controller_type": "soc_schedule"}).to_csv(profiles / "bess1.csv", index=False)
-    pd.DataFrame({"hour": HOURS, "ev_kw": [90 if 18 <= h <= 22 else 0 for h in HOURS], "ev_kvar": 0.0, "controller_type": "constant_pq"}).to_csv(profiles / "ev1.csv", index=False)
+    pd.DataFrame({"timestamp": ts_text, "wind_kw": [65 + 35 * ((h + 2) % 6) / 5 for h in HOURS], "wind_kvar": 0.0, "controller_type": "constant_pq"}).to_csv(profiles / "wind1.csv", index=False)
+    pd.DataFrame({"timestamp": ts_text, "bess_kw": [-45 if 10 <= h <= 15 else 35 for h in HOURS], "bess_kvar": 0.0, "controller_type": "soc_schedule"}).to_csv(profiles / "bess1.csv", index=False)
+    pd.DataFrame({"timestamp": ts_text, "ev_kw": [90 if 18 <= h <= 22 else 0 for h in HOURS], "ev_kvar": 0.0, "controller_type": "constant_pq"}).to_csv(profiles / "ev1.csv", index=False)
     print(f"Generated synthetic radial_12bus case in: {CASE_DIR}")
 
 

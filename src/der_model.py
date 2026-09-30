@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Dict, Any, Optional
 from pathlib import Path
 
@@ -57,11 +58,12 @@ class DERModel(ABC):
         pass
 
     @abstractmethod
-    def get_injection(self, time_step: int) -> Dict[str, float]:
-        """Get DER injection values for a specific time step.
+    def get_injection(self, time_step: datetime, dt_hours: float) -> Dict[str, Any]:
+        """Get DER injection values for a specific timestamp.
 
         Args:
-            time_step: Current simulation time step (e.g., hour)
+            time_step: Current simulation timestamp.
+            dt_hours: Duration of this time step in hours.
 
         Returns:
             Dictionary with injection parameters, typically:
@@ -94,7 +96,7 @@ class DERModel(ABC):
         """Validate the controller type included in every DER profile."""
         if self._profile_data is None:
             return
-        required = {"hour", "controller_type"}
+        required = {"timestamp", "controller_type"}
         missing = required.difference(self._profile_data.columns)
         if missing:
             raise ValueError(f"DER profile missing columns: {sorted(missing)}")
@@ -103,6 +105,18 @@ class DERModel(ABC):
         )
         if unsupported:
             raise ValueError(f"Unsupported controller types: {sorted(unsupported)}")
+
+    def _row_at(self, time_step: datetime) -> Optional[pd.Series]:
+        """Return the profile row matching ``time_step``, or ``None``."""
+        if self._profile_data is None:
+            return None
+        matches = self._profile_data[self._profile_data["timestamp"] == self._ts_str(time_step)]
+        return None if matches.empty else matches.iloc[0]
+
+    @staticmethod
+    def _ts_str(time_step: datetime) -> str:
+        """Normalize a timestamp to the string form stored in profile CSVs."""
+        return pd.Timestamp(time_step).strftime("%Y-%m-%d %H:%M:%S")
 
     @staticmethod
     def _controller_fields(row: pd.Series) -> Dict[str, Any]:
@@ -165,28 +179,25 @@ class PVModel(DERModel):
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
         if self._profile_data is not None:
-            required = {"hour", "pv_kw"}
+            required = {"timestamp", "pv_kw"}
             missing = required.difference(self._profile_data.columns)
             if missing:
                 raise ValueError(f"PV profile missing columns: {sorted(missing)}")
 
-    def get_injection(self, time_step: int) -> Dict[str, float]:
-        """Get PV generation for a specific hour.
+    def get_injection(self, time_step: datetime, dt_hours: float = 1.0) -> Dict[str, Any]:
+        """Get PV generation for a specific timestamp.
 
         Returns:
             Dictionary with 'p_kw' (active power) and 'q_kvar' (reactive power, typically 0)
         """
-        if self._profile_data is None:
+        row = self._row_at(time_step)
+        if row is None:
             return {"p_kw": 0.0, "q_kvar": 0.0}
 
-        row = self._profile_data[self._profile_data["hour"] == time_step]
-        if row.empty:
-            return {"p_kw": 0.0, "q_kvar": 0.0}
+        pv_kw = float(row["pv_kw"])
+        q_kvar = float(row.get("pv_kvar", 0.0))
 
-        pv_kw = float(row.iloc[0]["pv_kw"])
-        q_kvar = float(row.iloc[0].get("pv_kvar", 0.0))
-
-        return {"p_kw": pv_kw, "q_kvar": q_kvar, **self._controller_fields(row.iloc[0])}
+        return {"p_kw": pv_kw, "q_kvar": q_kvar, **self._controller_fields(row)}
 
     def apply_to_opendss(self, dss_interface: Any, injection: Dict[str, float]) -> None:
         """Apply PV generation to OpenDSS Generator element."""
@@ -223,24 +234,21 @@ class WindModel(DERModel):
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
         if self._profile_data is not None:
-            required = {"hour", "wind_kw"}
+            required = {"timestamp", "wind_kw"}
             missing = required.difference(self._profile_data.columns)
             if missing:
                 raise ValueError(f"Wind profile missing columns: {sorted(missing)}")
 
-    def get_injection(self, time_step: int) -> Dict[str, float]:
-        """Get wind generation for a specific hour."""
-        if self._profile_data is None:
+    def get_injection(self, time_step: datetime, dt_hours: float = 1.0) -> Dict[str, Any]:
+        """Get wind generation for a specific timestamp."""
+        row = self._row_at(time_step)
+        if row is None:
             return {"p_kw": 0.0, "q_kvar": 0.0}
 
-        row = self._profile_data[self._profile_data["hour"] == time_step]
-        if row.empty:
-            return {"p_kw": 0.0, "q_kvar": 0.0}
+        wind_kw = float(row["wind_kw"])
+        q_kvar = float(row.get("wind_kvar", 0.0))
 
-        wind_kw = float(row.iloc[0]["wind_kw"])
-        q_kvar = float(row.iloc[0].get("wind_kvar", 0.0))
-
-        return {"p_kw": wind_kw, "q_kvar": q_kvar, **self._controller_fields(row.iloc[0])}
+        return {"p_kw": wind_kw, "q_kvar": q_kvar, **self._controller_fields(row)}
 
     def apply_to_opendss(self, dss_interface: Any, injection: Dict[str, float]) -> None:
         """Apply wind generation to OpenDSS Generator element."""
@@ -280,39 +288,39 @@ class BESSModel(DERModel):
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
         if self._profile_data is not None:
-            required = {"hour", "bess_kw"}
+            required = {"timestamp", "bess_kw"}
             missing = required.difference(self._profile_data.columns)
             if missing:
                 raise ValueError(f"BESS profile missing columns: {sorted(missing)}")
 
-    def get_injection(self, time_step: int) -> Dict[str, float]:
-        """Get BESS charge/discharge for a specific hour.
+    def get_injection(self, time_step: datetime, dt_hours: float = 1.0) -> Dict[str, Any]:
+        """Get BESS charge/discharge for a specific timestamp.
+
+        The planned power is clipped so the SOC cannot break the reserve/100% bounds
+        over exactly ``dt_hours``.
 
         Returns:
             Dictionary with 'p_kw' (positive=discharge, negative=charge), 'q_kvar', and 'soc'
         """
-        if self._profile_data is None:
+        row = self._row_at(time_step)
+        if row is None:
             return {"p_kw": 0.0, "q_kvar": 0.0, "soc": self._soc}
 
-        row = self._profile_data[self._profile_data["hour"] == time_step]
-        if row.empty:
-            return {"p_kw": 0.0, "q_kvar": 0.0, "soc": self._soc}
-
-        bess_kw = float(row.iloc[0]["bess_kw"])
-        q_kvar = float(row.iloc[0].get("bess_kvar", 0.0))
+        bess_kw = float(row["bess_kw"])
+        q_kvar = float(row.get("bess_kvar", 0.0))
 
         if bess_kw > 0:
             bess_kw = min(
                 bess_kw,
-                (self._soc - self.reserve_soc) / 100.0 * self.capacity_kwh * self.discharge_efficiency,
+                (self._soc - self.reserve_soc) / 100.0 * self.capacity_kwh * self.discharge_efficiency / dt_hours,
             )
         elif bess_kw < 0:
             bess_kw = -min(
                 abs(bess_kw),
-                (100.0 - self._soc) / 100.0 * self.capacity_kwh / self.charge_efficiency,
+                (100.0 - self._soc) / 100.0 * self.capacity_kwh / self.charge_efficiency / dt_hours,
             )
 
-        return {"p_kw": bess_kw, "q_kvar": q_kvar, "soc": self._soc, **self._controller_fields(row.iloc[0])}
+        return {"p_kw": bess_kw, "q_kvar": q_kvar, "soc": self._soc, **self._controller_fields(row)}
 
     def advance_state(self, injection: Dict[str, Any], dt_hours: float) -> None:
         p_kw = float(injection["p_kw"])
@@ -378,28 +386,25 @@ class EVModel(DERModel):
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
         if self._profile_data is not None:
-            required = {"hour", "ev_kw"}
+            required = {"timestamp", "ev_kw"}
             missing = required.difference(self._profile_data.columns)
             if missing:
                 raise ValueError(f"EV profile missing columns: {sorted(missing)}")
 
-    def get_injection(self, time_step: int) -> Dict[str, float]:
-        """Get EV charging load for a specific hour.
+    def get_injection(self, time_step: datetime, dt_hours: float = 1.0) -> Dict[str, Any]:
+        """Get EV charging load for a specific timestamp.
 
         Returns:
             Dictionary with positive charging load ``p_kw`` and ``q_kvar``.
         """
-        if self._profile_data is None:
+        row = self._row_at(time_step)
+        if row is None:
             return {"p_kw": 0.0, "q_kvar": 0.0}
 
-        row = self._profile_data[self._profile_data["hour"] == time_step]
-        if row.empty:
-            return {"p_kw": 0.0, "q_kvar": 0.0}
+        ev_kw = float(row["ev_kw"])
+        q_kvar = float(row.get("ev_kvar", 0.0))
 
-        ev_kw = float(row.iloc[0]["ev_kw"])
-        q_kvar = float(row.iloc[0].get("ev_kvar", 0.0))
-
-        return {"p_kw": ev_kw, "q_kvar": q_kvar, **self._controller_fields(row.iloc[0])}
+        return {"p_kw": ev_kw, "q_kvar": q_kvar, **self._controller_fields(row)}
 
     def apply_to_opendss(self, dss_interface: Any, injection: Dict[str, float]) -> None:
         """Apply EV charging to OpenDSS Load element."""

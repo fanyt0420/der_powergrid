@@ -68,7 +68,7 @@ class OpenDSSSolver:
         solution = dss.ActiveCircuit.Solution
         solution.Solve()
         if not solution.Converged:
-            raise RuntimeError(f"OpenDSS power flow did not converge at hour {operating_point.hour}.")
+            raise RuntimeError(f"OpenDSS power flow did not converge at timestamp {operating_point.time}.")
         voltage_records, voltages = self._bus_voltage_records()
         line_records = self._line_records()
         return PFResult(

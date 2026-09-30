@@ -74,7 +74,7 @@ def main() -> None:
     print(f"QSTS completed for case: {data_dir.name}")
     print(f"Input data: {data_dir}")
     print(f"Results: {output_dir.resolve()}")
-    print(qsts_system[["hour", "total_load_kw", "min_v_pu", "max_v_pu", "loss_kw"]].to_string(index=False))
+    print(qsts_system[["timestamp", "total_load_kw", "min_v_pu", "max_v_pu", "loss_kw"]].to_string(index=False))
 
 
 if __name__ == "__main__":

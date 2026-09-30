@@ -4,6 +4,11 @@
     "base_kv_ll": 12.47,
     "slack_bus": "source"
   },
+  "simulation": {
+    "start_datetime": "2026-01-01 00:00:00",
+    "end_datetime": "2026-01-02 00:00:00",
+    "step_seconds": 3600
+  },
   "buses": [
     {
       "id": "source",

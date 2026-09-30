@@ -1,25 +1,25 @@
-hour,wind_kw,wind_kvar,controller_type
-0,79.0,0.0,constant_pq
-1,86.0,0.0,constant_pq
-2,93.0,0.0,constant_pq
-3,100.0,0.0,constant_pq
-4,65.0,0.0,constant_pq
-5,72.0,0.0,constant_pq
-6,79.0,0.0,constant_pq
-7,86.0,0.0,constant_pq
-8,93.0,0.0,constant_pq
-9,100.0,0.0,constant_pq
-10,65.0,0.0,constant_pq
-11,72.0,0.0,constant_pq
-12,79.0,0.0,constant_pq
-13,86.0,0.0,constant_pq
-14,93.0,0.0,constant_pq
-15,100.0,0.0,constant_pq
-16,65.0,0.0,constant_pq
-17,72.0,0.0,constant_pq
-18,79.0,0.0,constant_pq
-19,86.0,0.0,constant_pq
-20,93.0,0.0,constant_pq
-21,100.0,0.0,constant_pq
-22,65.0,0.0,constant_pq
-23,72.0,0.0,constant_pq
+timestamp,wind_kw,wind_kvar,controller_type
+2026-01-01 00:00:00,79.0,0.0,constant_pq
+2026-01-01 01:00:00,86.0,0.0,constant_pq
+2026-01-01 02:00:00,93.0,0.0,constant_pq
+2026-01-01 03:00:00,100.0,0.0,constant_pq
+2026-01-01 04:00:00,65.0,0.0,constant_pq
+2026-01-01 05:00:00,72.0,0.0,constant_pq
+2026-01-01 06:00:00,79.0,0.0,constant_pq
+2026-01-01 07:00:00,86.0,0.0,constant_pq
+2026-01-01 08:00:00,93.0,0.0,constant_pq
+2026-01-01 09:00:00,100.0,0.0,constant_pq
+2026-01-01 10:00:00,65.0,0.0,constant_pq
+2026-01-01 11:00:00,72.0,0.0,constant_pq
+2026-01-01 12:00:00,79.0,0.0,constant_pq
+2026-01-01 13:00:00,86.0,0.0,constant_pq
+2026-01-01 14:00:00,93.0,0.0,constant_pq
+2026-01-01 15:00:00,100.0,0.0,constant_pq
+2026-01-01 16:00:00,65.0,0.0,constant_pq
+2026-01-01 17:00:00,72.0,0.0,constant_pq
+2026-01-01 18:00:00,79.0,0.0,constant_pq
+2026-01-01 19:00:00,86.0,0.0,constant_pq
+2026-01-01 20:00:00,93.0,0.0,constant_pq
+2026-01-01 21:00:00,100.0,0.0,constant_pq
+2026-01-01 22:00:00,65.0,0.0,constant_pq
+2026-01-01 23:00:00,72.0,0.0,constant_pq

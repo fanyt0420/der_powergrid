@@ -1,5 +1,5 @@
 {
-  "qsts_hour": 12,
+  "qsts_time": "2026-01-01 12:00:00",
   "scenario": "flat_run",
   "initial_der_pq": {
     "PV1": {

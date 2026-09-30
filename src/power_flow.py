@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any, Mapping, Protocol
@@ -16,6 +17,7 @@ class NetworkModel:
     buses: tuple[Mapping[str, Any], ...]
     branches: tuple[Mapping[str, Any], ...]
     devices: tuple[Mapping[str, Any], ...]
+    simulation: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, path: str | Path) -> "NetworkModel":
@@ -25,6 +27,7 @@ class NetworkModel:
             buses=tuple(raw["buses"]),
             branches=tuple(raw["branches"]),
             devices=tuple(raw["devices"]),
+            simulation=raw.get("simulation", {}),
         )
 
     def device(self, name: str) -> Mapping[str, Any]:
@@ -58,7 +61,7 @@ class OperatingPoint:
     sign convention; OpenDSSSolver maps them to their OpenDSS element type.
     """
 
-    hour: int
+    time: datetime
     load_pq_kva: Mapping[str, complex]
     der_commands: Mapping[str, DERCommand]
     metadata: Mapping[str, Any] = field(default_factory=dict)

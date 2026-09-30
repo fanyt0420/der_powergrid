@@ -65,17 +65,27 @@ python run.py --data-dir data\radial_12bus --output output\experiment_a
 
 ## 网络与时序接口
 
-负荷 profile 是长表。每一个时刻必须包含 `network.json` 中所有 `kind="load"` 设备各一行：
+负荷 profile 是长表。每一个时刻必须包含 `network.json` 中所有 `kind="load"` 设备各一行，时间用 `timestamp` 表示真实时间（`YYYY-MM-DD HH:MM:SS`）：
 
 ```csv
-hour,load_name,p_kw,q_kvar
-0,Load1,270.630,90.210
-0,Load2,217.124,70.246
+timestamp,load_name,p_kw,q_kvar
+2026-01-01 00:00:00,Load1,270.630,90.210
+2026-01-01 00:00:00,Load2,217.124,70.246
 ```
 
 每台 DER 的 `profile_file` 由 `network.json` 内设备定义指定；因此 `run.py` 会自动发现并创建 PV、Wind、BESS、EV 模型，不再写死 `PV1`、`bus1` 或三个负荷。
 
-所有 DER profile 必须包含 `hour` 和 `controller_type`。当前支持：
+仿真的开始时间、结束时间和时间间隔记录在 `network.json` 顶层的 `simulation` 块中：
+
+```json
+"simulation": {
+  "start_datetime": "2026-01-01 00:00:00",
+  "end_datetime": "2026-01-02 00:00:00",
+  "step_seconds": 3600
+}
+```
+
+所有 DER profile 必须包含 `timestamp` 和 `controller_type`，且其 `timestamp` 与负荷 profile 对齐。当前支持：
 
 | 控制器 | 行为 |
 | --- | --- |
@@ -112,7 +122,7 @@ class PowerFlowSolver(Protocol):
 
 ## QSTS、控制和状态传递
 
-每小时执行：
+对每个时间戳执行：
 
 ```text
 读取当前逐负荷 P/Q 与各 DER profile
@@ -149,8 +159,8 @@ class DERModel:
     def _validate_profile(self) -> None:
         """校验设备时序和 controller_type。"""
 
-    def get_injection(self, time_step: int) -> dict[str, object]:
-        """返回计划 P/Q、控制器类型和参数。"""
+    def get_injection(self, time_step: datetime, dt_hours: float) -> dict[str, object]:
+        """按时间戳返回计划 P/Q、控制器类型和参数。"""
 
     def to_command(self, injection: dict[str, object]) -> DERCommand:
         """将模型数据转为求解器无关的 DERCommand。"""
@@ -195,19 +205,19 @@ DER 设备的名称、种类、接入母线、额定功率、储能容量和 pro
 PV 的 Volt-VAR profile：
 
 ```csv
-hour,pv_kw,pv_kvar,controller_type,q_limit_kvar,v_ref_pu,droop_kvar_per_pu
-12,180,0,volt_var,45,1.0,540
+timestamp,pv_kw,pv_kvar,controller_type,q_limit_kvar,v_ref_pu,droop_kvar_per_pu
+2026-01-01 12:00:00,180,0,volt_var,45,1.0,540
 ```
 
 BESS 的计划功率 profile：
 
 ```csv
-hour,bess_kw,bess_kvar,controller_type
-10,-45,0,soc_schedule
-18,35,0,soc_schedule
+timestamp,bess_kw,bess_kvar,controller_type
+2026-01-01 10:00:00,-45,0,soc_schedule
+2026-01-01 18:00:00,35,0,soc_schedule
 ```
 
-`controller_type` 必须逐时给出，因此后续可在同一台设备的不同运行时段切换控制方式。当前实现支持 `constant_pq`、`volt_var` 和 `soc_schedule`；不支持的类型会在 profile 读取时明确报错。
+`controller_type` 必须逐时刻给出，因此后续可在同一台设备的不同运行时段切换控制方式。当前实现支持 `constant_pq`、`volt_var` 和 `soc_schedule`；不支持的类型会在 profile 读取时明确报错。
 
 ### PV Volt-VAR 方程
 
@@ -231,11 +241,11 @@ SOC_{t+1}=SOC_t-\frac{P_t\Delta t}{\eta_{dis}E}\times100,\quad P_t>0
 SOC_{t+1}=SOC_t+\frac{|P_t|\eta_{ch}\Delta t}{E}\times100,\quad P_t<0
 \]
 
-其中 \(E\)、SOC 下限、初始 SOC 和效率从该 BESS 的网络设备定义读取，\(\Delta t\) 当前为 1 小时。`qsts_system.csv` 的 `<bess_name>_soc_pct` 是每个时刻末、将传给下一时刻的 SOC。
+其中 \(E\)、SOC 下限、初始 SOC 和效率从该 BESS 的网络设备定义读取；\(\Delta t\) 为该时间点到下一时间点的时间间隔（小时），由相邻 `timestamp` 之差求得，因此 BESS 的能量约束不依赖固定步长。`qsts_system.csv` 的 `<bess_name>_soc_pct` 是每个时刻末、将传给下一时刻的 SOC。
 
 ## QSTS 求解过程详解
 
-对每一个 `hour`，QSTS 的实际顺序为：
+对每一个 `timestamp`，QSTS 的实际顺序为：
 
 ```text
 1. 从 load_profiles.csv 读取所有基础负荷的 P/Q
@@ -390,19 +400,19 @@ V_{tgt}&=V_{ref}+k_{vq}(q_{ref}-q_{meas}),\qquad \tau_v \dot V_{int}=V_{tgt}-V_{
 
 ### 运行 RMS
 
-先生成 QSTS 输出，再选定一个小时作为动态初始工作点：
+先生成 QSTS 输出，再用 `--time` 选定一个时间戳作为动态初始工作点：
 
 ```powershell
 python run.py --data-dir data\radial_12bus
-python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --hour 12 --scenario flat_run
-python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --hour 12 --scenario load_step
-python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --hour 12 --scenario der_trip
+python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --time "2026-01-01 12:00:00" --scenario flat_run
+python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --time "2026-01-01 12:00:00" --scenario load_step
+python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --time "2026-01-01 12:00:00" --scenario der_trip
 ```
 
 默认输出目录是 `output/<case>/rms/<scenario>/`：
 
 - `rms_summary.csv`：每个秒级时刻的扰动标签、潮流内部迭代次数、最小/最大电压、网损、源侧 P/Q，以及每台动态 DER 的实际注入 P/Q 与其内部状态/指标（列名形如 `<device_id 小写>_p_kw`、`<device_id 小写>_p_filter_pu`、`<device_id 小写>_frequency_hz` 等）；
 - `rms_bus_voltages.csv`：每时刻、每母线相的电压幅值和相角；
-- `rms_initialization.json`：选用的 QSTS 小时、初始 DER P/Q 和慢状态，便于复现工作点。
+- `rms_initialization.json`：选用的 QSTS 时间戳、初始 DER P/Q 和慢状态，便于复现工作点。
 
 新增 DER 类型时，继承 `DERModel`，在 `DERModel.SUPPORTED_CONTROLLERS` 登记控制器类型，并实现 profile 校验、注入、控制方程和状态更新。新增自研求解器时，在 `src/solvers/custom_pf_solver.py` 实现 `build()` 与 `solve()`，读取相同的 `NetworkModel`、`OperatingPoint` 和 `PFState`，返回 `PFResult`；QSTS、数据格式和 DER 控制器保持不变。
