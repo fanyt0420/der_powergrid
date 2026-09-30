@@ -49,6 +49,28 @@ class DERModel(ABC):
             self._profile_data = pd.read_csv(self.profile_file)
             self._validate_profile()
 
+    def validate_timeline(self, timestamps: list[pd.Timestamp]) -> None:
+        """Validate profile timestamps against the authoritative simulation timeline.
+
+        Every timestamp of the timeline must have exactly one profile row and no other
+        timestamp may be present. Missing or unexpected entries raise instead of
+        silently defaulting to zero.
+        """
+        if self._profile_data is None:
+            raise ValueError(f"DER {self.name!r} has no profile loaded.")
+        data_ts = pd.to_datetime(self._profile_data["timestamp"])
+        if data_ts.duplicated().any():
+            raise ValueError(f"DER {self.name!r} profile has duplicate timestamps.")
+        expected = {pd.Timestamp(t).strftime("%Y-%m-%d %H:%M:%S") for t in timestamps}
+        actual = set(data_ts.dt.strftime("%Y-%m-%d %H:%M:%S"))
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        if missing or extra:
+            raise ValueError(
+                f"DER {self.name!r} profile does not align with the simulation timeline: "
+                f"missing={missing}, extra={extra}."
+            )
+
     @abstractmethod
     def _validate_profile(self) -> None:
         """Validate that the loaded profile contains required columns."""
@@ -92,12 +114,19 @@ class DERModel(ABC):
         if unsupported:
             raise ValueError(f"Unsupported controller types: {sorted(unsupported)}")
 
-    def _row_at(self, time_step: datetime) -> Optional[pd.Series]:
-        """Return the profile row matching ``time_step``, or ``None``."""
+    def _row_at(self, time_step: datetime) -> pd.Series:
+        """Return the profile row matching ``time_step``.
+
+        Raises if the profile is not loaded or the timestamp is missing; profiles are
+        validated upfront against the timeline so a missing row is an error, not a
+        silent zero.
+        """
         if self._profile_data is None:
-            return None
+            raise ValueError(f"DER {self.name!r} profile is not loaded.")
         matches = self._profile_data[self._profile_data["timestamp"] == self._ts_str(time_step)]
-        return None if matches.empty else matches.iloc[0]
+        if matches.empty:
+            raise ValueError(f"DER {self.name!r} profile is missing timestamp {self._ts_str(time_step)}.")
+        return matches.iloc[0]
 
     @staticmethod
     def _ts_str(time_step: datetime) -> str:
@@ -158,8 +187,6 @@ class PVModel(DERModel):
             Dictionary with 'p_kw' (active power) and 'q_kvar' (reactive power, typically 0)
         """
         row = self._row_at(time_step)
-        if row is None:
-            return {"p_kw": 0.0, "q_kvar": 0.0}
 
         pv_kw = float(row["pv_kw"])
         q_kvar = float(row.get("pv_kvar", 0.0))
@@ -184,8 +211,6 @@ class WindModel(DERModel):
     def get_injection(self, time_step: datetime, dt_hours: float = 1.0) -> Dict[str, Any]:
         """Get wind generation for a specific timestamp."""
         row = self._row_at(time_step)
-        if row is None:
-            return {"p_kw": 0.0, "q_kvar": 0.0}
 
         wind_kw = float(row["wind_kw"])
         q_kvar = float(row.get("wind_kvar", 0.0))
@@ -202,6 +227,7 @@ class BESSModel(DERModel):
         profile_file: Optional[str | Path] = None,
         bus_name: Optional[str] = None,
         capacity_kwh: float = 200.0,
+        p_rated_kw: float = 0.0,
         reserve_soc: float = 20.0,
         initial_soc: float = 50.0,
         charge_efficiency: float = 0.95,
@@ -210,6 +236,7 @@ class BESSModel(DERModel):
         super().__init__(name, profile_file, bus_name)
         self._soc = initial_soc
         self.capacity_kwh = capacity_kwh
+        self.p_rated_kw = p_rated_kw
         self.reserve_soc = reserve_soc
         self.charge_efficiency = charge_efficiency
         self.discharge_efficiency = discharge_efficiency
@@ -232,11 +259,13 @@ class BESSModel(DERModel):
             Dictionary with 'p_kw' (positive=discharge, negative=charge), 'q_kvar', and 'soc'
         """
         row = self._row_at(time_step)
-        if row is None:
-            return {"p_kw": 0.0, "q_kvar": 0.0, "soc": self._soc}
 
         bess_kw = float(row["bess_kw"])
         q_kvar = float(row.get("bess_kvar", 0.0))
+
+        # 功率限制：不超过额定功率
+        if self.p_rated_kw > 0:
+            bess_kw = max(-self.p_rated_kw, min(self.p_rated_kw, bess_kw))
 
         if bess_kw > 0:
             bess_kw = min(
@@ -284,8 +313,6 @@ class EVModel(DERModel):
             Dictionary with positive charging load ``p_kw`` and ``q_kvar``.
         """
         row = self._row_at(time_step)
-        if row is None:
-            return {"p_kw": 0.0, "q_kvar": 0.0}
 
         ev_kw = float(row["ev_kw"])
         q_kvar = float(row.get("ev_kvar", 0.0))

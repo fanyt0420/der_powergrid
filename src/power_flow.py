@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
+import pandas as pd
+
 
 @dataclass(frozen=True)
 class NetworkModel:
@@ -38,6 +40,39 @@ class NetworkModel:
 
     def base_load_names(self) -> set[str]:
         return {str(device["id"]) for device in self.devices if device["kind"] == "load"}
+
+    def simulation_timestamps(self) -> list[pd.Timestamp]:
+        """Return the authoritative timeline from the ``simulation`` block.
+
+        The timeline is ``[start, start+step, ..., end)`` using a half-open interval:
+        ``end_datetime`` is the exclusive upper bound. A case must define all of
+        ``start_datetime``, ``end_datetime`` and ``step_seconds``.
+        """
+        simulation = self.simulation
+        required = {"start_datetime", "end_datetime", "step_seconds"}
+        missing = required.difference(simulation)
+        if missing:
+            raise ValueError(f"network.json 'simulation' is missing fields: {sorted(missing)}")
+        start = pd.Timestamp(simulation["start_datetime"])
+        end = pd.Timestamp(simulation["end_datetime"])
+        step_seconds = int(simulation["step_seconds"])
+        if step_seconds <= 0:
+            raise ValueError("network.json 'simulation.step_seconds' must be positive.")
+        if end <= start:
+            raise ValueError("network.json 'simulation.end_datetime' must be after 'start_datetime'.")
+        timestamps = list(pd.date_range(start, end, freq=f"{step_seconds}s", inclusive="left"))
+        if not timestamps:
+            raise ValueError("network.json 'simulation' block yields an empty timeline.")
+        return timestamps
+
+    def step_seconds(self) -> int:
+        simulation = self.simulation
+        if "step_seconds" not in simulation:
+            raise ValueError("network.json 'simulation' is missing 'step_seconds'.")
+        step_seconds = int(simulation["step_seconds"])
+        if step_seconds <= 0:
+            raise ValueError("network.json 'simulation.step_seconds' must be positive.")
+        return step_seconds
 
 
 @dataclass(frozen=True)
@@ -118,6 +153,9 @@ class PFResult:
     next_state: PFState
     final_der_commands: Mapping[str, DERCommand] = field(default_factory=dict)
     control_iterations: int = 0
+    pf_solve_count: int = 0
+    pf_iterations_total: int = 0
+    pf_iterations_last: int = 0
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -128,6 +166,9 @@ class SolverContext:
     time_step_hours: float = 1.0
     control_iteration: int = 0
     previous_result: PFResult | None = None
+    max_control_iterations: int = 20
+    control_tolerance: float = 1e-6
+    relaxation: float = 1.0
     extra_equations: Mapping[str, Any] = field(default_factory=dict)
     options: Mapping[str, Any] = field(default_factory=dict)
 

@@ -42,11 +42,25 @@ class RMSResult:
 
 
 def _clip_current(p: float, q: float, voltage: float, limit: float) -> tuple[float, float]:
+    """Limit the apparent current of a power pair ``(p, q)`` to ``limit``.
+
+    ``p``/``q`` are powers; the current magnitude is ``|S|/V``. Returns ``(p, q)``
+    unchanged when under the limit, otherwise scaled proportionally.
+    """
     magnitude = (p * p + q * q) ** 0.5 / max(voltage, 1e-6)
     if magnitude <= limit:
         return p, q
     scale = limit / magnitude
     return p * scale, q * scale
+
+
+def _clip_current_vector(i_d: float, i_q: float, limit: float) -> tuple[float, float]:
+    """Limit a current-vector magnitude ``sqrt(i_d^2 + i_q^2)`` to ``limit``."""
+    magnitude = (i_d * i_d + i_q * i_q) ** 0.5
+    if magnitude <= limit:
+        return i_d, i_q
+    scale = limit / magnitude
+    return i_d * scale, i_q * scale
 
 
 def _bus_voltage(voltages: Mapping[str, complex], bus: str) -> tuple[float, float]:
@@ -109,7 +123,11 @@ class GFLInverter(RMSDevice):
         p_ref, q_ref = self.targets_pu()
         error = sin(angle - float(state["pll_angle_rad"]))
         frequency = float(self.config["pll_kp_hz_per_rad"]) * error + float(self.config["pll_ki_hz_per_rad_s"]) * float(state["pll_integrator"])
-        i_d_ref, i_q_ref = _clip_current(float(state["p_filter_pu"]) / max(voltage, 1e-6), float(state["q_filter_pu"]) / max(voltage, 1e-6), voltage, self.current_limit_pu)
+        i_d_ref, i_q_ref = _clip_current_vector(
+            float(state["p_filter_pu"]) / max(voltage, 1e-6),
+            float(state["q_filter_pu"]) / max(voltage, 1e-6),
+            self.current_limit_pu,
+        )
         return {"p_filter_pu": (p_ref - float(state["p_filter_pu"])) / float(self.config["tau_p_control_s"]), "q_filter_pu": (q_ref - float(state["q_filter_pu"])) / float(self.config["tau_q_control_s"]), "i_d_pu": (i_d_ref - float(state["i_d_pu"])) / float(self.config["tau_current_s"]), "i_q_pu": (i_q_ref - float(state["i_q_pu"])) / float(self.config["tau_current_s"]), "pll_angle_rad": 2 * pi * frequency, "pll_integrator": error}
 
     def injection(self, state: Mapping[str, float], voltage: float, template: DERCommand) -> DERCommand:

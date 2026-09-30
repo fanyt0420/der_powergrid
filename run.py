@@ -37,6 +37,7 @@ def build_der_models(network: NetworkModel, data_dir: Path) -> list[DERModel]:
             model: DERModel = BESSModel(
                 **common,
                 capacity_kwh=float(device["energy_kwh"]),
+                p_rated_kw=float(device.get("p_rated_kw", 0.0)),
                 reserve_soc=float(device.get("reserve_soc", 20.0)),
                 initial_soc=float(device.get("initial_soc", 50.0)),
                 charge_efficiency=float(device.get("charge_efficiency", 0.95)),
@@ -68,7 +69,7 @@ def main() -> None:
     solver.build(network)
     der_models = build_der_models(network, data_dir)
 
-    qsts_bus, qsts_system, qsts_branches = run_qsts(solver, der_models, data_dir / "load_profiles.csv")
+    qsts_bus, qsts_system, qsts_branches = run_qsts(solver, der_models, data_dir / "load_profiles.csv", network)
     qsts_bus.to_csv(output_dir / "qsts_bus_voltages.csv", index=False)
     qsts_system.to_csv(output_dir / "qsts_system.csv", index=False)
     qsts_branches.to_csv(output_dir / "qsts_branch_results.csv", index=False)
