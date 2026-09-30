@@ -4,6 +4,14 @@
     "base_kv_ll": 12.47,
     "slack_bus": "source"
   },
+  "constraints": {
+    "voltage_min_pu": 0.95,
+    "voltage_max_pu": 1.05,
+    "voltage_unbalance_limit_pct": 2.0,
+    "line_loading_limit_pct": 100.0,
+    "transformer_loading_limit_pct": 100.0,
+    "reverse_power_tolerance_kw": 1e-06
+  },
   "simulation": {
     "start_datetime": "2026-01-01 00:00:00",
     "end_datetime": "2026-01-02 00:00:00",
@@ -119,6 +127,7 @@
   "branches": [
     {
       "id": "L1",
+      "kind": "line",
       "from_bus": "source",
       "to_bus": "b1",
       "phases": [
@@ -170,10 +179,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L2",
+      "kind": "line",
       "from_bus": "b1",
       "to_bus": "b2",
       "phases": [
@@ -225,10 +237,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L3",
+      "kind": "line",
       "from_bus": "b2",
       "to_bus": "b3",
       "phases": [
@@ -280,10 +295,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L4",
+      "kind": "line",
       "from_bus": "b3",
       "to_bus": "b4",
       "phases": [
@@ -335,10 +353,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L5",
+      "kind": "line",
       "from_bus": "b2",
       "to_bus": "b5",
       "phases": [
@@ -390,10 +411,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L6",
+      "kind": "line",
       "from_bus": "b5",
       "to_bus": "b6",
       "phases": [
@@ -445,10 +469,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L7",
+      "kind": "line",
       "from_bus": "b5",
       "to_bus": "b7",
       "phases": [
@@ -500,10 +527,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L8",
+      "kind": "line",
       "from_bus": "b1",
       "to_bus": "b8",
       "phases": [
@@ -555,10 +585,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L9",
+      "kind": "line",
       "from_bus": "b8",
       "to_bus": "b9",
       "phases": [
@@ -610,10 +643,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L10",
+      "kind": "line",
       "from_bus": "b9",
       "to_bus": "b10",
       "phases": [
@@ -665,10 +701,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L11",
+      "kind": "line",
       "from_bus": "b8",
       "to_bus": "b11",
       "phases": [
@@ -720,10 +759,13 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     },
     {
       "id": "L12",
+      "kind": "line",
       "from_bus": "b11",
       "to_bus": "b12",
       "phases": [
@@ -775,7 +817,9 @@
             0.12
           ]
         ]
-      ]
+      ],
+      "normal_amps": 400.0,
+      "rating_source": "engineering_screening_assumption"
     }
   ],
   "devices": [

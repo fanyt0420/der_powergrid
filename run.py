@@ -11,8 +11,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from src.der_model import BESSModel, DERModel, EVModel, PVModel, WindModel
 from src.power_flow import NetworkModel
+from src.profile_store import ProfileStore
 from src.qsts import run_qsts
 from src.solvers.opendss_solver import OpenDSSSolver
 
@@ -22,36 +22,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, required=True, help="Case directory containing network.json and network.dss.")
     parser.add_argument("--output", type=Path, help="Result directory; defaults to output/<case-directory-name>.")
     return parser.parse_args()
-
-
-def build_der_models(network: NetworkModel, data_dir: Path) -> list[DERModel]:
-    models: list[DERModel] = []
-    model_types = {"pv": PVModel, "wind": WindModel, "ev": EVModel}
-    for device in network.devices:
-        kind = str(device["kind"])
-        if kind == "load":
-            continue
-        profile_file = data_dir / str(device["profile_file"])
-        common = {"name": str(device["id"]), "profile_file": profile_file, "bus_name": str(device["bus"]), "phases": list(device.get("phases", []))}
-        if kind == "bess":
-            model: DERModel = BESSModel(
-                **common,
-                capacity_kwh=float(device["energy_kwh"]),
-                p_rated_kw=float(device.get("p_rated_kw", 0.0)),
-                reserve_soc=float(device.get("reserve_soc", 20.0)),
-                initial_soc=float(device.get("initial_soc", 50.0)),
-                charge_efficiency=float(device.get("charge_efficiency", 0.95)),
-                discharge_efficiency=float(device.get("discharge_efficiency", 0.95)),
-            )
-        elif kind in model_types:
-            model = model_types[kind](**common)
-        else:
-            raise ValueError(f"Unsupported DER kind {kind!r} for device {device['id']!r}.")
-        if not profile_file.exists():
-            raise FileNotFoundError(f"DER profile not found: {profile_file}")
-        model.load_profile()
-        models.append(model)
-    return models
 
 
 def main() -> None:
@@ -67,12 +37,24 @@ def main() -> None:
     network = NetworkModel.from_json(data_dir / "network.json")
     solver = OpenDSSSolver(data_dir / "network.dss")
     solver.build(network)
-    der_models = build_der_models(network, data_dir)
+    profiles = ProfileStore.from_case(network, data_dir)
 
-    qsts_bus, qsts_system, qsts_branches = run_qsts(solver, der_models, data_dir / "load_profiles.csv", network)
+    qsts_bus, qsts_system, qsts_branches = run_qsts(solver, profiles, network)
     qsts_bus.to_csv(output_dir / "qsts_bus_voltages.csv", index=False)
     qsts_system.to_csv(output_dir / "qsts_system.csv", index=False)
     qsts_branches.to_csv(output_dir / "qsts_branch_results.csv", index=False)
+    constraint_columns = [
+        "timestamp", "voltage_low_count", "voltage_high_count", "voltage_unbalance_count",
+        "line_thermal_violation_count", "transformer_thermal_violation_count",
+        "max_voltage_unbalance_pct", "max_line_loading_pct", "max_transformer_loading_pct",
+        "reverse_power_flow", "reverse_power_kw",
+    ]
+    hosting_columns = [
+        "timestamp", "voltage_headroom_pu", "line_loading_headroom_pct",
+        "transformer_loading_headroom_pct", "binding_constraint",
+    ]
+    qsts_system.loc[:, constraint_columns].to_csv(output_dir / "qsts_constraints.csv", index=False)
+    qsts_system.loc[:, hosting_columns].to_csv(output_dir / "qsts_hosting_capacity_metrics.csv", index=False)
     print(f"QSTS completed for case: {data_dir.name}")
     print(f"Input data: {data_dir}")
     print(f"Results: {output_dir.resolve()}")

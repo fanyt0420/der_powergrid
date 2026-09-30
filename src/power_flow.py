@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol
 
 import pandas as pd
@@ -20,6 +21,47 @@ class NetworkModel:
     branches: tuple[Mapping[str, Any], ...]
     devices: tuple[Mapping[str, Any], ...]
     simulation: Mapping[str, Any] = field(default_factory=dict)
+    source: Mapping[str, Any] = field(default_factory=dict)
+    line_codes: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    shunt_devices: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    constraints: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = "1.0"
+    bus_ids: tuple[str, ...] = field(init=False)
+    device_ids: tuple[str, ...] = field(init=False)
+    branch_ids: tuple[str, ...] = field(init=False)
+    shunt_ids: tuple[str, ...] = field(init=False)
+    bus_index: Mapping[str, int] = field(init=False)
+    device_index: Mapping[str, int] = field(init=False)
+    branch_index: Mapping[str, int] = field(init=False)
+    shunt_index: Mapping[str, int] = field(init=False)
+    load_indices: tuple[int, ...] = field(init=False)
+    der_indices: tuple[int, ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        bus_ids = tuple(str(bus["id"]) for bus in self.buses)
+        device_ids = tuple(str(device["id"]) for device in self.devices)
+        branch_ids = tuple(str(branch["id"]) for branch in self.branches)
+        shunt_ids = tuple(str(device["id"]) for device in self.shunt_devices)
+        bus_index = {name.lower(): index for index, name in enumerate(bus_ids)}
+        device_index = {name.lower(): index for index, name in enumerate(device_ids)}
+        branch_index = {name.lower(): index for index, name in enumerate(branch_ids)}
+        shunt_index = {name.lower(): index for index, name in enumerate(shunt_ids)}
+        if len(bus_index) != len(bus_ids):
+            raise ValueError("network.json has duplicate bus IDs.")
+        if len(device_index) != len(device_ids):
+            raise ValueError("network.json has duplicate device IDs.")
+        if len(branch_index) != len(branch_ids) or len(shunt_index) != len(shunt_ids):
+            raise ValueError("network.json has duplicate branch or shunt IDs.")
+        object.__setattr__(self, "bus_ids", bus_ids)
+        object.__setattr__(self, "device_ids", device_ids)
+        object.__setattr__(self, "branch_ids", branch_ids)
+        object.__setattr__(self, "shunt_ids", shunt_ids)
+        object.__setattr__(self, "bus_index", MappingProxyType(bus_index))
+        object.__setattr__(self, "device_index", MappingProxyType(device_index))
+        object.__setattr__(self, "branch_index", MappingProxyType(branch_index))
+        object.__setattr__(self, "shunt_index", MappingProxyType(shunt_index))
+        object.__setattr__(self, "load_indices", tuple(index for index, device in enumerate(self.devices) if device["kind"] == "load"))
+        object.__setattr__(self, "der_indices", tuple(index for index, device in enumerate(self.devices) if device["kind"] != "load"))
 
     @classmethod
     def from_json(cls, path: str | Path) -> "NetworkModel":
@@ -30,16 +72,21 @@ class NetworkModel:
             branches=tuple(raw["branches"]),
             devices=tuple(raw["devices"]),
             simulation=raw.get("simulation", {}),
+            source=raw.get("source", {}),
+            line_codes=raw.get("line_codes", {}),
+            shunt_devices=tuple(raw.get("shunt_devices", ())),
+            constraints=raw.get("constraints", {}),
+            schema_version=str(raw.get("schema_version", "1.0")),
         )
 
     def device(self, name: str) -> Mapping[str, Any]:
-        for device in self.devices:
-            if str(device["id"]).lower() == name.lower():
-                return device
-        raise KeyError(f"Network has no device named {name!r}.")
+        try:
+            return self.devices[self.device_index[name.lower()]]
+        except KeyError as exc:
+            raise KeyError(f"Network has no device named {name!r}.") from exc
 
     def base_load_names(self) -> set[str]:
-        return {str(device["id"]) for device in self.devices if device["kind"] == "load"}
+        return {self.device_ids[index] for index in self.load_indices}
 
     def simulation_timestamps(self) -> list[pd.Timestamp]:
         """Return the authoritative timeline from the ``simulation`` block.
@@ -135,6 +182,56 @@ class PFState:
 
 
 @dataclass(frozen=True)
+class ConstraintResult:
+    """Per-operating-point security checks independent of a solver backend."""
+
+    voltage_low_count: int = 0
+    voltage_high_count: int = 0
+    voltage_unbalance_count: int = 0
+    line_thermal_violation_count: int = 0
+    transformer_thermal_violation_count: int = 0
+    min_voltage_pu: float = float("nan")
+    max_voltage_pu: float = float("nan")
+    max_voltage_unbalance_pct: float = float("nan")
+    max_line_loading_pct: float = float("nan")
+    max_transformer_loading_pct: float = float("nan")
+    reverse_power_flow: bool = False
+    reverse_power_kw: float = 0.0
+
+    def summary(self) -> Mapping[str, float | bool]:
+        return {
+            "voltage_low_count": self.voltage_low_count,
+            "voltage_high_count": self.voltage_high_count,
+            "voltage_unbalance_count": self.voltage_unbalance_count,
+            "line_thermal_violation_count": self.line_thermal_violation_count,
+            "transformer_thermal_violation_count": self.transformer_thermal_violation_count,
+            "max_voltage_unbalance_pct": self.max_voltage_unbalance_pct,
+            "max_line_loading_pct": self.max_line_loading_pct,
+            "max_transformer_loading_pct": self.max_transformer_loading_pct,
+            "reverse_power_flow": self.reverse_power_flow,
+            "reverse_power_kw": self.reverse_power_kw,
+        }
+
+
+@dataclass(frozen=True)
+class HostingCapacityMetrics:
+    """Observed operating headroom; not a separate DER-capacity optimization."""
+
+    voltage_headroom_pu: float = float("nan")
+    line_loading_headroom_pct: float = float("nan")
+    transformer_loading_headroom_pct: float = float("nan")
+    binding_constraint: str = "none"
+
+    def summary(self) -> Mapping[str, float | str]:
+        return {
+            "voltage_headroom_pu": self.voltage_headroom_pu,
+            "line_loading_headroom_pct": self.line_loading_headroom_pct,
+            "transformer_loading_headroom_pct": self.transformer_loading_headroom_pct,
+            "binding_constraint": self.binding_constraint,
+        }
+
+
+@dataclass(frozen=True)
 class PFResult:
     """Result of one converged network solve.
 
@@ -157,6 +254,8 @@ class PFResult:
     pf_iterations_total: int = 0
     pf_iterations_last: int = 0
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    constraints: ConstraintResult = field(default_factory=ConstraintResult)
+    hosting_capacity: HostingCapacityMetrics = field(default_factory=HostingCapacityMetrics)
 
 
 @dataclass(frozen=True)

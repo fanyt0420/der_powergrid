@@ -68,7 +68,7 @@ def network() -> dict:
         {"id": "BESS1", "kind": "bess", "bus": "b6", "phases": [1, 2, 3], "p_rated_kw": 80, "energy_kwh": 500, "reserve_soc": 20, "initial_soc": 55, "profile_file": "der_profiles/bess1.csv"},
         {"id": "EV1", "kind": "ev", "bus": "b12", "phases": [1, 2, 3], "p_rated_kw": 90, "profile_file": "der_profiles/ev1.csv"},
     ]
-    return {"base": {"frequency_hz": 60, "base_kv_ll": 12.47, "slack_bus": "source"}, "simulation": simulation(), "buses": [{"id": "source", "phases": [1, 2, 3], "is_slack": True}] + [{"id": f"b{i}", "phases": [1, 2, 3]} for i in range(1, 13)], "branches": [{"id": f"L{i}", "from_bus": start, "to_bus": end, "phases": [1, 2, 3], "length_km": length, "z_ohm_per_km": Z_MATRIX} for i, (start, end, length) in enumerate(EDGES, 1)], "devices": devices}
+    return {"base": {"frequency_hz": 60, "base_kv_ll": 12.47, "slack_bus": "source"}, "constraints": {"voltage_min_pu": .95, "voltage_max_pu": 1.05, "voltage_unbalance_limit_pct": 2.0, "line_loading_limit_pct": 100.0, "transformer_loading_limit_pct": 100.0, "reverse_power_tolerance_kw": 1e-6}, "simulation": simulation(), "buses": [{"id": "source", "phases": [1, 2, 3], "is_slack": True}] + [{"id": f"b{i}", "phases": [1, 2, 3]} for i in range(1, 13)], "branches": [{"id": f"L{i}", "kind": "line", "from_bus": start, "to_bus": end, "phases": [1, 2, 3], "length_km": length, "z_ohm_per_km": Z_MATRIX, "normal_amps": 400.0, "rating_source": "engineering_screening_assumption"} for i, (start, end, length) in enumerate(EDGES, 1)], "devices": devices}
 
 
 def dss_text() -> str:

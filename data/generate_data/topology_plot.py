@@ -39,12 +39,15 @@ def plot_network_topology(
         start, end = str(branch["from_bus"]), str(branch["to_bus"])
         x1, y1 = positions[start]
         x2, y2 = positions[end]
-        ax.plot([x1, x2], [y1, y2], color="#566573", linewidth=2.0, zorder=1)
+        kind = str(branch.get("kind", "line"))
+        color, style = ("#9b59b6", "--") if kind in {"transformer", "regulator"} else ("#c0392b", ":") if kind == "switch" else ("#566573", "-")
+        ax.plot([x1, x2], [y1, y2], color=color, linestyle=style, linewidth=2.0, zorder=1)
         mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
+        detail = f"\n{branch['length_km']:.2f} km" if "length_km" in branch else f"\n{kind}"
         ax.text(
             mid_x,
             mid_y + 0.13,
-            f"{branch['id']}\n{branch['length_km']:.2f} km",
+            f"{branch['id']}{detail}",
             ha="center",
             va="bottom",
             fontsize=7,
@@ -80,6 +83,9 @@ def plot_network_topology(
     legend = [
         Line2D([0], [0], marker="s", color="w", markerfacecolor="#f4d03f", markeredgecolor="#1f2d3d", label="Source / slack bus", markersize=10),
         Line2D([0], [0], marker="o", color="w", markerfacecolor="#d6eaf8", markeredgecolor="#1f2d3d", label="Load bus", markersize=10),
+        Line2D([0], [0], color="#566573", label="Line"),
+        Line2D([0], [0], color="#9b59b6", linestyle="--", label="Transformer / regulator"),
+        Line2D([0], [0], color="#c0392b", linestyle=":", label="Switch"),
     ] + [
         Line2D([0], [0], marker="D", color="w", markerfacecolor=color, markeredgecolor="#34495e", label=label, markersize=7)
         for label, color in DEVICE_STYLE.values()
