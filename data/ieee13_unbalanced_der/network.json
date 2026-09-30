@@ -1,0 +1,550 @@
+{
+  "base": {
+    "frequency_hz": 60,
+    "base_kv_ll": 4.16,
+    "slack_bus": "650"
+  },
+  "simulation": {
+    "start_datetime": "2026-01-01 00:00:00",
+    "end_datetime": "2026-01-02 00:00:00",
+    "step_seconds": 3600
+  },
+  "buses": [
+    {
+      "id": "650",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": true
+    },
+    {
+      "id": "RG60",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "632",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "633",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "634",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "645",
+      "phases": [
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "646",
+      "phases": [
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "670",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "671",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "680",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "692",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "675",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "684",
+      "phases": [
+        1,
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "611",
+      "phases": [
+        3
+      ],
+      "is_slack": false
+    },
+    {
+      "id": "652",
+      "phases": [
+        1
+      ],
+      "is_slack": false
+    }
+  ],
+  "branches": [
+    {
+      "id": "650632",
+      "from_bus": "RG60",
+      "to_bus": "632",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "632670",
+      "from_bus": "632",
+      "to_bus": "670",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "670671",
+      "from_bus": "670",
+      "to_bus": "671",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "671680",
+      "from_bus": "671",
+      "to_bus": "680",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "632633",
+      "from_bus": "632",
+      "to_bus": "633",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "632645",
+      "from_bus": "632",
+      "to_bus": "645",
+      "phases": [
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "645646",
+      "from_bus": "645",
+      "to_bus": "646",
+      "phases": [
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "671692",
+      "from_bus": "671",
+      "to_bus": "692",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "692675",
+      "from_bus": "692",
+      "to_bus": "675",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "671684",
+      "from_bus": "671",
+      "to_bus": "684",
+      "phases": [
+        1,
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "684611",
+      "from_bus": "684",
+      "to_bus": "611",
+      "phases": [
+        3
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    },
+    {
+      "id": "684652",
+      "from_bus": "684",
+      "to_bus": "652",
+      "phases": [
+        1
+      ],
+      "kind": "line",
+      "length_km": 0.1
+    }
+  ],
+  "devices": [
+    {
+      "id": "671",
+      "kind": "load",
+      "bus": "671",
+      "phases": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "634a",
+      "kind": "load",
+      "bus": "634",
+      "phases": [
+        1
+      ]
+    },
+    {
+      "id": "634b",
+      "kind": "load",
+      "bus": "634",
+      "phases": [
+        2
+      ]
+    },
+    {
+      "id": "634c",
+      "kind": "load",
+      "bus": "634",
+      "phases": [
+        3
+      ]
+    },
+    {
+      "id": "645",
+      "kind": "load",
+      "bus": "645",
+      "phases": [
+        2
+      ]
+    },
+    {
+      "id": "646",
+      "kind": "load",
+      "bus": "646",
+      "phases": [
+        2,
+        3
+      ]
+    },
+    {
+      "id": "692",
+      "kind": "load",
+      "bus": "692",
+      "phases": [
+        1,
+        3
+      ]
+    },
+    {
+      "id": "675a",
+      "kind": "load",
+      "bus": "675",
+      "phases": [
+        1
+      ]
+    },
+    {
+      "id": "675b",
+      "kind": "load",
+      "bus": "675",
+      "phases": [
+        2
+      ]
+    },
+    {
+      "id": "675c",
+      "kind": "load",
+      "bus": "675",
+      "phases": [
+        3
+      ]
+    },
+    {
+      "id": "611",
+      "kind": "load",
+      "bus": "611",
+      "phases": [
+        3
+      ]
+    },
+    {
+      "id": "652",
+      "kind": "load",
+      "bus": "652",
+      "phases": [
+        1
+      ]
+    },
+    {
+      "id": "670a",
+      "kind": "load",
+      "bus": "670",
+      "phases": [
+        1
+      ]
+    },
+    {
+      "id": "670b",
+      "kind": "load",
+      "bus": "670",
+      "phases": [
+        2
+      ]
+    },
+    {
+      "id": "670c",
+      "kind": "load",
+      "bus": "670",
+      "phases": [
+        3
+      ]
+    },
+    {
+      "id": "PV_632_A",
+      "kind": "pv",
+      "bus": "632",
+      "phases": [
+        1
+      ],
+      "p_rated_kw": 70,
+      "profile_file": "der_profiles/pv_632_a.csv"
+    },
+    {
+      "id": "PV_670_C",
+      "kind": "pv",
+      "bus": "670",
+      "phases": [
+        3
+      ],
+      "p_rated_kw": 50,
+      "profile_file": "der_profiles/pv_670_c.csv"
+    },
+    {
+      "id": "PV_671_A",
+      "kind": "pv",
+      "bus": "671",
+      "phases": [
+        1
+      ],
+      "p_rated_kw": 80,
+      "profile_file": "der_profiles/pv_671_a.csv"
+    },
+    {
+      "id": "PV_675_A",
+      "kind": "pv",
+      "bus": "675",
+      "phases": [
+        1
+      ],
+      "p_rated_kw": 100,
+      "profile_file": "der_profiles/pv_675_a.csv"
+    },
+    {
+      "id": "PV_675_C",
+      "kind": "pv",
+      "bus": "675",
+      "phases": [
+        3
+      ],
+      "p_rated_kw": 70,
+      "profile_file": "der_profiles/pv_675_c.csv"
+    },
+    {
+      "id": "PV_634_ABC",
+      "kind": "pv",
+      "bus": "634",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "p_rated_kw": 180,
+      "profile_file": "der_profiles/pv_634_abc.csv"
+    },
+    {
+      "id": "BESS_671_B",
+      "kind": "bess",
+      "bus": "671",
+      "phases": [
+        2
+      ],
+      "p_rated_kw": 100,
+      "energy_kwh": 400,
+      "reserve_soc": 20,
+      "initial_soc": 55,
+      "profile_file": "der_profiles/bess_671_b.csv"
+    },
+    {
+      "id": "BESS_645_B",
+      "kind": "bess",
+      "bus": "645",
+      "phases": [
+        2
+      ],
+      "p_rated_kw": 60,
+      "energy_kwh": 240,
+      "reserve_soc": 20,
+      "initial_soc": 60,
+      "profile_file": "der_profiles/bess_645_b.csv"
+    },
+    {
+      "id": "BESS_684_A",
+      "kind": "bess",
+      "bus": "684",
+      "phases": [
+        1
+      ],
+      "p_rated_kw": 50,
+      "energy_kwh": 200,
+      "reserve_soc": 20,
+      "initial_soc": 50,
+      "profile_file": "der_profiles/bess_684_a.csv"
+    },
+    {
+      "id": "EV_671_C",
+      "kind": "ev",
+      "bus": "671",
+      "phases": [
+        3
+      ],
+      "p_rated_kw": 60,
+      "profile_file": "der_profiles/ev_671_c.csv"
+    },
+    {
+      "id": "EV_675_B",
+      "kind": "ev",
+      "bus": "675",
+      "phases": [
+        2
+      ],
+      "p_rated_kw": 50,
+      "profile_file": "der_profiles/ev_675_b.csv"
+    },
+    {
+      "id": "EV_611_C",
+      "kind": "ev",
+      "bus": "611",
+      "phases": [
+        3
+      ],
+      "p_rated_kw": 40,
+      "profile_file": "der_profiles/ev_611_c.csv"
+    },
+    {
+      "id": "Wind_680_ABC",
+      "kind": "wind",
+      "bus": "680",
+      "phases": [
+        1,
+        2,
+        3
+      ],
+      "p_rated_kw": 120,
+      "profile_file": "der_profiles/wind_680_abc.csv"
+    }
+  ]
+}

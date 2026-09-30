@@ -32,7 +32,7 @@ def build_der_models(network: NetworkModel, data_dir: Path) -> list[DERModel]:
         if kind == "load":
             continue
         profile_file = data_dir / str(device["profile_file"])
-        common = {"name": str(device["id"]), "profile_file": profile_file, "bus_name": str(device["bus"])}
+        common = {"name": str(device["id"]), "profile_file": profile_file, "bus_name": str(device["bus"]), "phases": list(device.get("phases", []))}
         if kind == "bess":
             model: DERModel = BESSModel(
                 **common,

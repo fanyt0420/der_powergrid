@@ -1,414 +1,508 @@
-# OpenDSS DER QSTS 框架
+# OpenDSS DER QSTS / RMS 仿真框架
 
-本项目支持多个独立算例。网络拓扑、负荷、DER 设备、DER 时序和输出均按算例目录组织；`run.py` 不默认任何特定网络规模、节点名称或 DER 数量。
+本项目面向配电网中多类分布式能源（DER）的时序潮流与秒级动态仿真。网络拓扑、负荷时序、DER 时序和动态参数均由数据目录描述；QSTS 与 RMS 分别使用小时级和秒级时间尺度。
 
-## 算例目录
+```text
+DER profiles -> QSTS -> PFResult -> DynamicOperatingPoint -> RMS
+```
+
+QSTS 计算每个时刻的稳态潮流，并传递储能 SOC 等慢状态。RMS 从一个已收敛的 QSTS 工作点初始化，计算 GFL/GFM/聚合 DER 的短时动态响应。
+
+## 目录结构
 
 ```text
 data/
 ├── generate_data/
-│   ├── three_node.py       # 3 节点示例数据生成器
-│   └── radial_12bus.py     # 12 节点、多支路、多 DER 合成馈线数据生成器
-├── three_node/             # three_node.py 的生成结果
-└── radial_12bus/           # radial_12bus.py 的生成结果
+│   ├── radial_12bus.py            # 12 节点径向配电网数据生成器
+│   ├── ieee13_unbalanced_der.py   # IEEE 13 节点三相不平衡数据生成器
+│   └── topology_plot.py           # 拓扑图绘制工具
+├── radial_12bus/
+│   ├── network.json
+│   ├── network.dss
+│   ├── load_profiles.csv
+│   ├── der_profiles/
+│   ├── rms_config.json
+│   └── network_topology.png
+└── ieee13_unbalanced_der/
+    ├── network.json
+    ├── network.dss
+    ├── ieee13_base/               # IEEE 13 节点 OpenDSS 基础模型
+    ├── load_profiles.csv
+    ├── der_profiles/
+    └── network_topology.png
 
-output/
-├── three_node/
-└── radial_12bus/
+src/
+├── power_flow.py                  # 网络、潮流输入/输出和求解器接口
+├── der_model.py                   # PV、风电、储能、EV 的慢时标模型
+├── qsts.py                        # QSTS 时序调度
+├── rms_model.py                   # RMS 工作点、设备模型和时间推进
+└── solvers/
+    ├── custom_pf_solver.py         # 自研三相潮流求解器的接口骨架
+    └── opendss_solver.py          # OpenDSS 潮流求解器实现
+
+run.py                             # QSTS 运行入口
+run_rms.py                         # RMS 运行入口
+output/                            # 仿真结果
 ```
 
-每个算例目录均包含：
+`data/<case>/network_topology.png` 展示节点、支路、负荷节点与 DER 接入位置。拓扑图是数据生成过程的一部分。
 
-```text
-<case>/
-├── network.json            # 规范网络数据，供自研求解器读取
-├── network.dss             # 同一网络的 OpenDSS 表示
-├── network_topology.png    # 由生成器绘制的拓扑图：节点、DER 与支路信息
-├── load_profiles.csv       # 逐负荷 P/Q 时序
-├── der_profiles/           # 每台 DER 一份时序和控制器配置
-└── rms_config.json         # 可选；仅包含 RMS 动态参数和扰动场景
-```
-
-`network.json` 是固定网络的规范输入，包含母线、支路、三相阻抗矩阵、设备类型、接入节点、额定参数和 DER profile 相对路径。`network.dss` 是 OpenDSS 后端的兼容文件，由同一个算例生成器创建。
-
-每次运行生成器还会生成 `network_topology.png`。图中方形黄色节点为平衡源，蓝色圆形节点为带基础负荷的节点；彩色菱形分别表示 PV、风机、BESS 和 EV，支路旁标注支路 ID 与长度。图仅由 `network.json` 的内容绘制，可用于检查生成数据的拓扑和设备接入是否符合预期。
-
-## 生成和运行
+## 安装与运行
 
 安装依赖：
 
-```powershell
+```bash
 pip install -r requirements.txt
 ```
 
-生成并运行多支路算例：
+### 12 节点径向算例
 
-```powershell
-python data\generate_data\radial_12bus.py
-python run.py --data-dir data\radial_12bus
+生成数据：
+
+```bash
+python data/generate_data/radial_12bus.py
 ```
 
-默认结果写入 `output/<算例目录名>/`。如需指定位置：
+运行 24 小时 QSTS：
 
-```powershell
-python run.py --data-dir data\radial_12bus --output output\experiment_a
+```bash
+python run.py --data-dir data/radial_12bus
 ```
 
-`radial_12bus` 是合成的三相 12 节点径向多支路馈线，而非 IEEE 123 节点基准。它包含 12 个基础负荷、12 条支路、2 台 PV、1 台风机、1 台 BESS 和 1 个 EV，用于验证当前通用数据接口和多 DER QSTS 能否处理复杂于三节点的拓扑。
+结果位于 `output/radial_12bus/`。
 
-## 网络与时序接口
+从中午 12:00 的 QSTS 工作点启动 RMS：
 
-负荷 profile 是长表。每一个时刻必须包含 `network.json` 中所有 `kind="load"` 设备各一行，时间用 `timestamp` 表示真实时间（`YYYY-MM-DD HH:MM:SS`）：
-
-```csv
-timestamp,load_name,p_kw,q_kvar
-2026-01-01 00:00:00,Load1,270.630,90.210
-2026-01-01 00:00:00,Load2,217.124,70.246
+```bash
+python run_rms.py ^
+  --data-dir data/radial_12bus ^
+  --qsts-output output/radial_12bus ^
+  --time "2026-01-01 12:00:00" ^
+  --scenario load_step
 ```
 
-每台 DER 的 `profile_file` 由 `network.json` 内设备定义指定；因此 `run.py` 会自动发现并创建 PV、Wind、BESS、EV 模型，不再写死 `PV1`、`bus1` 或三个负荷。
+PowerShell 中也可以将命令写成单行；Linux/macOS 请将 `^` 替换为 `\`。
 
-仿真的开始时间、结束时间和时间间隔记录在 `network.json` 顶层的 `simulation` 块中：
+### IEEE 13 节点三相不平衡高 DER 渗透率算例
 
-```json
-"simulation": {
-  "start_datetime": "2026-01-01 00:00:00",
-  "end_datetime": "2026-01-02 00:00:00",
-  "step_seconds": 3600
-}
+生成数据：
+
+```bash
+python data/generate_data/ieee13_unbalanced_der.py
 ```
 
-所有 DER profile 必须包含 `timestamp` 和 `controller_type`，且其 `timestamp` 与负荷 profile 对齐。当前支持：
+生成器使用 IEEE 13 Node Test Feeder 的 OpenDSS 基础模型；首次生成时会获取该公开基础文件。随后运行：
 
-| 控制器 | 行为 |
-| --- | --- |
-| `constant_pq` | 直接采用该时刻 profile 的 P/Q |
-| `volt_var` | 固定 profile P，按接入母线电压迭代调整 Q |
-| `soc_schedule` | 采用计划 BESS P/Q，但按 SOC 边界裁剪实际 P |
-
-## 求解器接口
-
-公共接口位于 `src/power_flow.py`：
-
-| 类型 | 职责 |
-| --- | --- |
-| `NetworkModel` | 固定网络数据，从 `network.json` 读取 |
-| `OperatingPoint` | 某时刻全部负荷复功率与 DER 命令 |
-| `DERCommand` | 单台 DER 的 P/Q、控制器类型与代数控制参数（Vref、droop、Qmin/Qmax、SOC 等） |
-| `PFState` | 上一时刻复电压初值与求解器状态 |
-| `PFResult` | 电压、线路结果、系统汇总、迭代次数、最终 DER 命令、控制迭代次数、下一状态 |
-| `SolverContext` | 时间步、控制迭代编号、上一轮结果、未来联立方程入口 |
-
-```python
-class PowerFlowSolver(Protocol):
-    def build(self, network: NetworkModel) -> None: ...
-
-    def solve(
-        self,
-        operating_point: OperatingPoint,
-        state: PFState | None,
-        context: SolverContext | None = None,
-    ) -> PFResult: ...
+```bash
+python run.py --data-dir data/ieee13_unbalanced_der
 ```
 
-当前后端为 `src/solvers/opendss_solver.py` 中的 `OpenDSSSolver`。未来在 `src/solvers/custom_pf_solver.py` 实现 `CustomPFSolver` 后，只需在运行入口替换求解器实例；QSTS、DER 控制器和数据格式无需修改。
+结果位于 `output/ieee13_unbalanced_der/`。该算例用于验证三相不平衡网络、单相/三相 DER 以及多设备 Volt-VAR 控制下的 QSTS 流程。
 
-## QSTS、控制和状态传递
+## 数据接口
 
-对每个时间戳执行：
+每个算例目录都是独立输入。程序不假定节点数量、DER 数量或网络名称。
 
-```text
-读取当前逐负荷 P/Q 与各 DER profile
-→ 构造 OperatingPoint（含 DER 控制参数）
-→ PowerFlowSolver.solve(OperatingPoint, PFState)   // 解析网络方程与 DER 控制代数方程
-→ BESS 推进 SOC，PFResult.next_state 传给下一时刻
-```
+### `network.json`
 
-DER 控制迭代（例如 Volt-VAR 的 `Q = g(V)`）发生在求解器内部：`OpenDSSSolver` 通过“潮流 → 更新 Q → 再潮流”的内层 fixed-point 循环使其与网络方程共同收敛，最终 DER 命令保存在 `PFResult.final_der_commands`，收敛所用的控制更新次数记录在 `PFResult.control_iterations`。QSTS 每个时间点只调用一次 `solver.solve()`，自身不再做外层控制循环。
-
-PV Volt-VAR 使用：
-
-```text
-Q = clip[k × (Vref − Vbus), −Qmax, Qmax]
-```
-
-BESS 的 SOC 为跨时段显式状态；其容量、初始 SOC、SOC 下限和效率从 `network.json` 的 BESS 设备定义读取。PV、Wind、EV 是无状态 profile 回放模型。`PFState` 已传递给下一时刻，为自研求解器提供电压 warm start 接口。
-
-## 输出
-
-每个算例输出目录包含：
-
-- `qsts_bus_voltages.csv`：每时刻、每母线相别的电压幅值和相角；
-- `qsts_system.csv`：总负荷、内层 DER 控制迭代次数、潮流内部迭代次数、电压范围、损耗、源端功率、最终 DER P/Q 和 BESS SOC；
-- `qsts_branch_results.csv`：每时刻、每条支路的电流幅值和首端 P/Q（由求解器的 `branch_records` 保存）。
-
-## DER 模块详解
-
-### 统一 DER 接口
-
-所有 DER 均继承 `src/der_model.py` 中的 `DERModel`。QSTS 不针对 PV、风机、储能或 EV 写类型判断；它只在每个时刻向模型请求注入命令（含控制器参数），并在收敛后推进跨时段状态。代数控制律（如 Volt-VAR）由求解器读取 `DERCommand` 中的 `controller_type` 与参数自行求解，不再由 QSTS 回调节点。
-
-```python
-class DERModel:
-    def _validate_profile(self) -> None:
-        """校验设备时序和 controller_type。"""
-
-    def get_injection(self, time_step: datetime, dt_hours: float) -> dict[str, object]:
-        """按时间戳返回计划 P/Q、控制器类型和参数。"""
-
-    def to_command(self, injection: dict[str, object]) -> DERCommand:
-        """将模型数据转为求解器无关的 DERCommand（含控制类型和参数）。"""
-
-    def advance_state(self, injection: dict[str, object], dt_hours: float) -> None:
-        """将本时刻状态传递到下一时刻。"""
-```
-
-`get_injection()` 和 `to_command()` 只产出当前时刻的计划 P/Q 与控制参数，不计算控制响应；VOLT-VAR 这类代数控制律由求解器依据 `DERCommand` 求解。`advance_state()` 只在当前时刻收敛后调用，用于跨时段物理状态（如 BESS SOC）。
-
-### 当前 DER 类型
-
-| 模型 | P 的符号 | 控制类型 | 跨时段状态 |
-| --- | --- | --- | --- |
-| `PVModel` | 正值为发电 | `volt_var` 或 `constant_pq` | 无 |
-| `WindModel` | 正值为发电 | `constant_pq` | 无 |
-| `BESSModel` | 正值放电、负值充电 | `soc_schedule` | SOC |
-| `EVModel` | 正值为充电负荷 | `constant_pq` | 无 |
-
-DER 模型本身与求解器后端解耦，不包含 OpenDSS 元件概念；`kind`（`pv`/`wind`/`bess`/`ev`）映射到哪种 OpenDSS 元件（`Generator`/`Storage`/`Load`）由 `OpenDSSSolver._set_der_command()` 决定。数据流统一为：
-
-```text
-DER 数据/状态/控制 → DERCommand → PowerFlowSolver → OpenDSS / 自研求解器
-```
-
-DER 设备的名称、种类、接入母线、额定功率、储能容量和 profile 文件均由 `network.json` 的 `devices` 读取。例如：
+`network.json` 是 Python 侧的规范网络描述，用于加载基础负荷、DER 类型、接入母线、端子相别、额定参数和仿真时间轴。典型结构如下：
 
 ```json
 {
-  "id": "BESS1",
-  "kind": "bess",
-  "bus": "b6",
-  "p_rated_kw": 80,
-  "energy_kwh": 500,
-  "reserve_soc": 20,
-  "initial_soc": 55,
-  "profile_file": "der_profiles/bess1.csv"
+  "base": {"frequency_hz": 60.0},
+  "simulation": {
+    "start_datetime": "2026-01-01 00:00:00",
+    "end_datetime": "2026-01-02 00:00:00",
+    "step_seconds": 3600
+  },
+  "buses": [{"id": "671", "phases": [1, 2, 3]}],
+  "branches": [{"id": "line_671_675", "from_bus": "671", "to_bus": "675"}],
+  "devices": [
+    {
+      "id": "PV_671_A",
+      "kind": "pv",
+      "bus": "671",
+      "phases": [1],
+      "p_rated_kw": 70.0,
+      "profile_file": "der_profiles/pv_671_a.csv"
+    }
+  ]
 }
 ```
 
-这也是 `run.py` 不再写死特定 DER 或节点名称的原因。
+时间点由 `start_datetime`、`end_datetime` 和 `step_seconds` 唯一确定，区间为 `[start_datetime, end_datetime)`。例如 24 小时、1 小时时间步会得到 24 个 QSTS 时刻。
 
-### DER profile 示例
+`network.dss` 是 OpenDSS 侧的网络模型。它保存电源、线路、变压器、固定负荷和基础网络参数；DER 注入值来自各自的时序文件。
 
-PV 的 Volt-VAR profile：
+### 负荷时序：`load_profiles.csv`
 
-```csv
+负荷文件是长表；每行表示一个基础负荷在一个时刻的复功率：
+
+```text
+timestamp,load_name,p_kw,q_kvar
+2026-01-01 00:00:00,Load1,33.264,10.933
+2026-01-01 00:00:00,Load2,39.050,11.390
+```
+
+`load_name` 对应 `network.json` 中 `kind="load"` 的设备 ID，也是 OpenDSS 基础负荷元件名称。每个仿真时刻必须恰好包含全部基础负荷各一行；缺失、重复或额外时间戳会报错。QSTS 在每个时刻写入该时刻全部基础负荷的 `kW/kvar`。
+
+### DER 时序：`der_profiles/<device>.csv`
+
+每台 DER 单独使用一个文件，均含 `timestamp` 和 `controller_type`，另外按设备种类使用不同的有功/无功列：
+
+```text
 timestamp,pv_kw,pv_kvar,controller_type,q_limit_kvar,v_ref_pu,droop_kvar_per_pu
-2026-01-01 12:00:00,180,0,volt_var,45,1.0,540
+2026-01-01 12:00:00,150.0,0.0,volt_var,45.0,1.0,540.0
 ```
 
-BESS 的计划功率 profile：
+| DER 模型 | 必需有功列 | 可选无功列 | P 的符号 |
+|---|---|---|---|
+| `PVModel` | `pv_kw` | `pv_kvar` | 正值为发电 |
+| `WindModel` | `wind_kw` | `wind_kvar` | 正值为发电 |
+| `BESSModel` | `bess_kw` | `bess_kvar` | 正值放电，负值充电 |
+| `EVModel` | `ev_kw` | `ev_kvar` | 正值为充电负荷 |
 
-```csv
-timestamp,bess_kw,bess_kvar,controller_type
-2026-01-01 10:00:00,-45,0,soc_schedule
-2026-01-01 18:00:00,35,0,soc_schedule
+常用控制器类型为：
+
+- `constant_pq`：按给定 `p_kw`、`q_kvar` 注入。
+- `volt_var`：有功按时序给定，无功由电压—无功曲线计算。
+- `soc_schedule`：储能按时序功率和 SOC 约束运行。
+
+Volt-VAR 文件使用 `q_limit_kvar`、`v_ref_pu` 与 `droop_kvar_per_pu`；储能的容量、额定功率、SOC 边界和效率由 `network.json` 中对应设备定义给出。DER 模型将控制器类型与该时刻参数一起封装为潮流命令。
+
+`phases` 表示 DER 实际接入的 OpenDSS 端子。Volt-VAR 控制只读取这些端子的电压；三相设备使用其接入相电压幅值的平均值。因此单相 DER 不会被其他相的电压直接稀释控制量。
+
+## 算例设定
+
+### `radial_12bus`
+
+这是一个合成的 12 节点径向网络，含 12 个基础负荷、12 条支路和 5 台 DER：
+
+| 设备 | 接入节点 | 额定/用途 | 控制 |
+|---|---:|---|---|
+| PV1 | b4 | 150 kW | Volt-VAR |
+| PV2 | b10 | 80 kW | 恒 P/Q |
+| Wind1 | b7 | 72 kW 峰值 | 恒 P/Q |
+| BESS1 | b6 | 80 kW / 500 kWh | SOC 时序调度 |
+| EV1 | b12 | 受控充电负荷 | 恒 P/Q |
+
+该算例提供 `rms_config.json`，可作为 QSTS 到 RMS 的完整示例。
+
+### `ieee13_unbalanced_der`
+
+该算例基于 IEEE 13 Node Test Feeder 的三相不平衡网络。DER 以单相和三相形式分散接入，形成较高的渗透率：
+
+| 类别 | 设备 | 合计容量/规模 |
+|---|---|---:|
+| 光伏 | PV_632_A、PV_670_C、PV_671_A、PV_675_A、PV_675_C、PV_634_ABC | 550 kW |
+| 储能 | BESS_671_B、BESS_645_B、BESS_684_A | 210 kW / 840 kWh |
+| EV | EV_671_C、EV_675_B、EV_611_C | 150 kW 充电功率 |
+| 风电 | Wind_680_ABC | 120 kW |
+
+PV 采用各自的 Volt-VAR 时序控制；储能在白天充电、傍晚放电，并受额定功率、能量容量、效率和 SOC 上下限约束；EV 在晚间充电窗口接入；风电按给定有功时序运行。IEEE 基础馈线来源见 [IEEE13Nodeckt.dss](https://github.com/dss-extensions/electricdss-tst/blob/master/Version8/Distrib/IEEETestCases/13Bus/IEEE13Nodeckt.dss)。
+
+## 潮流求解接口
+
+`src/power_flow.py` 将网络、潮流输入、潮流结果和求解器状态分开：
+
+| 对象 | 含义 |
+|---|---|
+| `NetworkModel` | 静态网络、设备定义、仿真时间轴 |
+| `OperatingPoint` | 一个时刻的负荷 P/Q、DER 命令和元数据 |
+| `PFState` | 由本时刻传给下一时刻的求解器状态，例如电压初值或后端状态 |
+| `PFResult` | 收敛标志、电压、支路量、系统汇总、最终 DER 命令和下一状态 |
+| `SolverContext` | 时间步长、上一时刻结果、控制迭代设置及扩展方程入口 |
+| `PowerFlowSolver` | 潮流求解器协议 |
+
+求解器接口为：
+
+```python
+solver.build(network)
+result = solver.solve(
+    operating_point=operating_point,
+    state=previous_pf_state,
+    context=solver_context,
+)
 ```
 
-`controller_type` 必须逐时刻给出，因此后续可在同一台设备的不同运行时段切换控制方式。当前实现支持 `constant_pq`、`volt_var` 和 `soc_schedule`；不支持的类型会在 profile 读取时明确报错。
+`PowerFlowSolver` 可以承载自研牛顿法、前推回代、潮流—控制器联立方程或其他后端。`SolverContext.extra_equations` 与 `options` 为扩展变量、约束和算法设置留出入口。QSTS 不依赖 OpenDSS 专有 API，只依赖该接口和 `PFResult` 合约。
 
-### PV Volt-VAR 方程
+## OpenDSS 求解过程
 
-PV 在潮流求解后读取其接入母线所有相别的平均标幺电压 \(V_{bus}\)，并计算：
+`OpenDSSSolver` 是 `PowerFlowSolver` 的一个实现。每个 QSTS 时刻中：
 
-\[
-Q_{PV}=\operatorname{clip}\left[k(V_{ref}-V_{bus}),-Q_{max},Q_{max}\right]
-\]
+1. 写入该时刻所有基础负荷和所有 DER 命令。
+2. 调用 OpenDSS 求解网络代数潮流。
+3. 对 Volt-VAR DER，根据其实际端子电压更新无功命令。
+4. 若命令变化超过容差，则重新写入全部负荷与全部 DER 命令并再次求解。
+5. 直到 Volt-VAR 命令收敛或达到控制迭代上限。
 
-低电压时注入正无功，高电压时吸收无功。该控制器是代数、无状态的：每个时刻电压确定后，Q 由该式唯一确定。代数求解由 `PowerFlowSolver` 内部完成——`OpenDSSSolver` 以“潮流 → 更新 Q → 再潮流”的 fixed-point 循环使网络方程与该式共同收敛，最终收敛的 Q 写入 `PFResult.final_der_commands`。
+最终潮流结果中的 `final_der_commands` 是控制迭代收敛后的命令。储能使用 OpenDSS `DispMode=EXTERNAL`，以带符号的 `kW` 指令表达充/放电：正值为向网络注入功率，负值为从网络吸收功率。SOC 更新使用最终命令和固定 QSTS 时间步长，随后传递至下一时刻。
 
-### BESS SOC 状态方程
-
-BESS 在写入求解器前先根据当前 SOC 约束其计划功率，保证不会突破最小 SOC 或 100% SOC。收敛后，以最终实际功率更新：
-
-\[
-SOC_{t+1}=SOC_t-\frac{P_t\Delta t}{\eta_{dis}E}\times100,\quad P_t>0
-\]
+给定负荷和 DER 注入时，网络求解的目标是三相非线性潮流方程：
 
 \[
-SOC_{t+1}=SOC_t+\frac{|P_t|\eta_{ch}\Delta t}{E}\times100,\quad P_t<0
+\frac{S_i^*}{V_i^*}=\sum_jY_{ij}V_j.
 \]
 
-其中 \(E\)、SOC 下限、初始 SOC 和效率从该 BESS 的网络设备定义读取；\(\Delta t\) 为该时间点到下一时间点的时间间隔（小时），由相邻 `timestamp` 之差求得，因此 BESS 的能量约束不依赖固定步长。`qsts_system.csv` 的 `<bess_name>_soc_pct` 是每个时刻末、将传给下一时刻的 SOC。
+对 Volt-VAR 设备，还要同时满足其 (Q=g(V)) 控制方程。OpenDSS 后端用固定点方式形成这两个条件的共同稳态解；自研求解器可将它们直接写入同一个牛顿方程组。
 
-## QSTS 求解过程详解
+## QSTS 状态传递
 
-对每一个 `timestamp`，QSTS 的实际顺序为：
+`run_qsts()` 的每一步遵循以下顺序：
 
 ```text
-1. 从 load_profiles.csv 读取所有基础负荷的 P/Q
-2. 从各 DER profile 读取计划 P/Q、controller_type 与控制参数
-3. 构造 OperatingPoint（含 DERCommand 控制律），并携带上一时刻 PFState 调用求解器
-4. 求解器内部联合求解网络方程与 DER 控制代数方程，直到共同收敛
-5. 获取 PFResult：电压、线路结果、系统汇总、最终 DER 命令、控制迭代次数
-6. 推进 BESS 等跨时段状态，PFState 传给下一时刻
-7. 保存电压、最终 DER 命令、SOC、损耗和迭代信息
+上一时刻 PFState、DER 慢状态
+        ↓
+读取当前负荷与每台 DER 的时序记录
+        ↓
+构造 OperatingPoint
+        ↓
+PowerFlowSolver.solve()
+        ↓
+PFResult.final_der_commands
+        ↓
+更新 BESS SOC 等 DER 慢状态，并保存 PFState
+        ↓
+下一时刻
 ```
 
-对于网络方程，求解器在给定负荷和 DER 注入时求解三相非线性潮流：
+这使得储能能量、求解器电压初值以及后端状态沿时间轴连续传递；QSTS 的第一个时刻也包含在输出中。
+
+## QSTS 输出
+
+`run.py` 在 `output/<case>/` 保存：
+
+| 文件 | 内容 |
+|---|---|
+| `qsts_bus_voltages.csv` | 每个时刻、每个母线端子的电压幅值、相角、标幺值 |
+| `qsts_branch_results.csv` | 每个时刻、每条支路的潮流和损耗信息 |
+| `qsts_system.csv` | 系统源端功率、总负荷、DER 最终 P/Q、BESS SOC、收敛和迭代统计 |
+
+输出目录由 `--output` 指定；未指定时为 `output/<data-dir 的末级目录>/`。
+
+## DER 模块与控制方程
+
+所有慢时标 DER 都继承 `DERModel`。QSTS 对设备类型没有分支：它在每个时刻向模型获取计划注入，将其转换为 `DERCommand`，在潮流收敛后才推进跨时段状态。
+
+```python
+injection = der.get_injection(time_step, dt_hours)
+command = der.to_command(injection)
+# 求解器返回最终控制命令后：
+der.advance_state(final_injection, dt_hours)
+```
+
+`get_injection()` 不计算节点电压响应；它只读取该时刻的 profile，并给出计划 P/Q、`controller_type` 和控制器参数。代数控制律由 `PowerFlowSolver` 处理。`to_command()` 同时把设备的 `phases` 写入 `DERCommand.parameters["terminal_nodes"]`，使求解器知道控制器应使用哪些端子电压。
+
+### PV Volt-VAR
+
+当 `controller_type=volt_var` 时，有功仍取 profile 的 `pv_kw`，无功根据实际端子电压幅值的平均标幺值 $V$ 更新：
 
 \[
-\frac{S_i^*}{V_i^*}=\sum_jY_{ij}V_j
+Q_{cmd}=\operatorname{clip}\left[k\left(V_{ref}-V\right),-Q_{max},Q_{max}\right],
 \]
 
-当前 `OpenDSSSolver` 用 OpenDSS 完成该方程组求解，并以“潮流 → 按 `DERCommand` 控制律更新 Q → 再潮流”的内层固定点迭代把网络方程与 DER 控制方程耦合到同一稳态解；`control_iterations` 记录该内层控制更新次数，`pf_iterations` 记录 OpenDSS 单次潮流的内部迭代次数，最终收敛命令存于 `PFResult.final_der_commands`。
+其中 $k$ 是 `droop_kvar_per_pu`，$V_{ref}$ 是 `v_ref_pu`，$Q_{max}$ 是 `q_limit_kvar`。低电压时得到正无功命令，高电压时得到负无功命令。对于单相 DER，$V$ 仅来自其所接入相；三相 DER 对所接入各相求平均。
 
-## 状态传递详解
+该控制律是代数、无状态的。在 OpenDSS 后端中，它通过“潮流 → 由电压更新 Q → 潮流”的内层固定点迭代与网络方程共同收敛，而非由 QSTS 在求解器外重复调用。
 
-当前有两类时序状态：
+### BESS SOC
 
-| 状态 | 保存位置 | 从 \(t\) 到 \(t+1\) 的传递方式 |
-| --- | --- | --- |
-| 节点复电压 | `PFResult.next_state.voltage_guess` | QSTS 作为下一时刻 `PFState` 传入求解器，供自研算法 warm start；当前 OpenDSS 后端保持已编译电路状态。 |
-| BESS SOC | `BESSModel` 内部状态 | 在时刻收敛后通过 `advance_state()` 更新；下一时刻限制可用充放电功率。 |
+`BESSModel` 是当前唯一具有显式慢时标物理状态的 DER。求解前，计划功率首先受额定功率、可放电能量和可充电余量限制；求解收敛后，使用最终的有功命令更新 SOC。令 $E$ 为容量（kWh），$\eta_{dis}$、$\eta_{ch}$ 为放电和充电效率，正功率表示放电：
 
-基础负荷、PV、Wind、EV 的计划 P/Q 不由上一时刻传递，而是由各自 profile 在每个时刻覆盖更新。PV Volt-VAR 的 Q 也是该时刻独立求得；BESS SOC 是当前唯一显式的跨时段设备物理状态。
+\[
+SOC_{t+1}=SOC_t-
+\frac{P_t\Delta t}{\eta_{dis}E}\times100,\qquad P_t>0,
+\]
 
-## 新增算例、新 DER 与自研求解器
+\[
+SOC_{t+1}=SOC_t+
+\frac{|P_t|\eta_{ch}\Delta t}{E}\times100,\qquad P_t<0.
+\]
 
-新增算例的基本步骤：
+更新结果限制在 `[reserve_soc, 100]`。`qsts_system.csv` 中 `<device_id 小写>_soc_pct` 表示本时刻结束后、传递到下一时刻的 SOC。
 
-1. 在 `data/generate_data/` 新建生成脚本。
-2. 在 `data/<case_name>/` 生成 `network.json`、`network.dss`、`load_profiles.csv` 和 `der_profiles/`。
-3. 设备定义中提供 `kind`、`bus`、额定参数和 `profile_file`。
-4. 使用 `python run.py --data-dir data/<case_name>` 验证。
+### OpenDSS 元件映射与符号
 
-## QSTS 到 RMS 动态仿真
+`OpenDSSSolver` 根据 `kind` 写入对应 OpenDSS 元件：PV 与风电使用 `Generator`，BESS 使用 `Storage`，EV 使用 `Load`。发电型 DER 的正有功向网络注入；EV 的正 `ev_kw` 作为负荷从网络吸收功率。BESS 采用 `DispMode=EXTERNAL`，并直接写入带符号的 `kW`：正值放电、负值充电。控制迭代中每次潮流前都会重新写入所有 DER 命令，因此储能不会在同一 QSTS 时刻的 Volt-VAR 内层迭代中重复推进。
 
-RMS 首版建立在既有 QSTS 结果之上：先用小时级 QSTS 找到已收敛的运行断面，再从指定时刻切换到秒级动态仿真。
+## RMS 仿真
+
+RMS 以 QSTS 某一时刻的已收敛断面为初值。`DynamicOperatingPoint` 保存母线电压、负荷 P/Q、DER P/Q、DER 慢状态及时间戳；`RMSState` 保存秒级时间、设备动态状态、电压和潮流状态。
+
+`rms_config.json` 只描述 QSTS 数据中没有的动态信息，例如设备动态模型、PLL 参数、内外环时间常数、下垂系数、虚拟惯量、电流限值、扰动和仿真步长。网络拓扑和 QSTS 时序数据不在该文件重复出现。
+
+已实现的设备模型：
+
+- `GFLInverter`：同步旋转坐标系 PLL、P/Q 外环、电流内环和圆形限流。
+- `GFMInverter`：P-f、Q-V 下垂、虚拟惯量/阻尼和内部电压动态。
+- `AggregateDER`：聚合 DER 的 P/Q 一阶动态与电压支撑。
+
+RMS 每个步长先根据设备状态和参考值计算 DER 注入，再调用 `PowerFlowSolver` 解网络代数方程，之后推进设备微分状态。它适合控制器和配电网机电暂态级别的原型验证，不等同于电磁暂态（EMT）仿真。
+
+### 初始化、状态与数值推进
+
+`load_qsts_operating_point()` 从 `network.json`、`load_profiles.csv`、`qsts_bus_voltages.csv` 和 `qsts_system.csv` 重建指定时刻的 `DynamicOperatingPoint`。其中包含各相复电压、全部基础负荷 P/Q、QSTS 最终 DER 命令以及 BESS SOC。网络拓扑不在 RMS 输出中重复保存。
+
+`initialize_rms()` 对每一台配置为动态模型的设备，以 QSTS 终值初始化内部状态，满足：
+
+\[
+P(0)=P^\star,\qquad Q(0)=Q^\star,\qquad V(0)=V^\star.
+\]
+
+`RMSState` 保存秒级时间、各设备微分状态、各母线相电压和 `PFState`。三相母线用正序分量计算 RMS 控制器使用的电压幅值与相角；单相母线直接使用其现有相电压。
+
+对步长 \(\Delta t\)，`run_rms()` 的顺序为：
 
 ```text
-DER profiles → QSTS → saved PFResult-equivalent data → RMS initialization → RMS simulation
+QSTS 工作点 -> RMS 初始化 -> t = 0 的网络潮流
+每个 RMS 步长：
+    应用到时的负荷阶跃或 DER 跳闸事件
+    用上一网络电压计算各 RMSDevice 的状态导数
+    显式 Euler 推进设备状态
+    从新状态生成 DER P/Q 命令
+    PowerFlowSolver.solve() 重解网络代数方程
+    保存状态、母线电压和汇总量
 ```
 
-`DynamicOperatingPoint` 是已求解的运行断面，在 [rms_model.py](src/rms_model.py) 中定义，包含指定 QSTS 时刻的各相复电压、每个基础负荷的 P/Q、每台 DER 的最终 P/Q、已保存的慢状态（当前为 BESS SOC）以及 QSTS 汇总元数据。它由以下已有文件重建，不复制网络拓扑或时序数据：
+这是“DER 微分状态 + 准稳态网络代数潮流”的 DAE 原型：设备状态为 \(x\)，母线电压为代数变量 \(z\)。网络仍由 `PowerFlowSolver` 提供，因此 RMS 编排不依赖 OpenDSS 的具体类，也可使用后续的自研求解器。
 
-- `network.json`
-- `load_profiles.csv`
-- `output/<case>/qsts_bus_voltages.csv`
-- `output/<case>/qsts_system.csv`
+### 动态 DER 模型
 
-### RMS 模型与边界
-
-当前提供三种标幺化的动态设备模型，共用统一 `RMSDevice` 接口：`initialize()`（以 QSTS 断面初始化状态）、`derivative()`（返回状态方程右端）、`injection()`（由状态生成注入网络的 P/Q 命令）与 `metrics()`（输出观测指标）。三种模型仅通过“标幺目标功率 → 内部状态方程 → 注入网络的 P/Q 命令”交互，不修改网络拓扑；设备额定功率 `rating_kw` 取自 `network.json` 的 `p_rated_kw`，标称频率取自 `rms_config.json` 的 `nominal_frequency_hz`（缺失时回退 `network.json` 的 `base.frequency_hz`，默认 60 Hz）。
-
-| 模型 | 类型 | 关键状态 |
-| --- | --- | --- |
-| `aggregate_der` | 聚合 DER（一阶 P/Q 跟踪 + 无功电压支撑） | \(p_{out},q_{out},p_{meas},q_{meas},V_{ref}\) |
-| `gfl_inverter` | 跟网型逆变器（GFL） | \(p_f,q_f,i_d,i_q,\theta_{pll},\int\varepsilon\) |
-| `gfm_inverter` | 构网型逆变器（GFM） | \(p_{out},q_{out},p_{meas},q_{meas},\Delta f,\theta,V_{int},V_{ref}\) |
-
-所有功率均为以各自设备 `p_rated_kw` 为基值的标幺值；\(V_{bus}\) 为设备接入母线的正序电压幅值，\(\theta_{bus}\) 为正序电压相角（由三相相电压经对称分量法提取，见 `_bus_voltage()`）。每个模型都带一个圆形电流限幅，由参数 `current_limit_pu` 给出：当视在电流 \(|S|/V_{bus}\) 超过限值时，按比例缩减 P、Q（见 `_clip_current()`）。
-
-#### `aggregate_der`（聚合 DER）
-
-一阶 P/Q 跟踪、无功电压支撑和测量低通。记标幺目标为 \(p_{ref},q_{ref}\)：
+各模型都使用设备 `p_rated_kw` 作为 P/Q 标幺基值，并使用 `current_limit_pu` 执行圆形限流：
 
 \[
-\begin{aligned}
-q_{ref} &\leftarrow q_{ref}+k_{v}(V_{ref}-V_{bus}), \\
-(p_{ref},q_{ref}) &\leftarrow \mathrm{clip}(p_{ref},q_{ref}), \\
-\tau_p \dot p_{out}&=p_{ref}-p_{out},\qquad \tau_q \dot q_{out}=q_{ref}-q_{out}, \\
-\tau_m \dot p_{meas}&=p_{out}-p_{meas},\qquad \tau_m \dot q_{meas}=q_{out}-q_{meas}.
-\end{aligned}
+\frac{\sqrt{P^2+Q^2}}{\max(V,\epsilon)}\le I_{max}.
 \]
 
-其中 \(k_{v}\) 即 `voltage_support_pu_per_pu`（可选，默认 0），\(\mathrm{clip}\) 为上述圆形电流限幅。注入命令由 \(p_{out},q_{out}\) 再经一次限幅后乘以 \(p_{rated}\) 得到。
+超过限值时，P/Q 或 d/q 电流分量按同一比例缩小，以保持功率因数角。
 
-#### `gfl_inverter`（跟网型逆变器）
-
-包含 SRF-PLL、P/Q 外环、电流内环与限流。记 PLL 相角误差 \(\varepsilon=\sin(\theta_{bus}-\theta_{pll})\)，频率偏差 \(\Delta f=k_p^{pll}\varepsilon+k_i^{pll}\int\varepsilon\)：
+`aggregate_der` 采用一阶 P/Q 跟踪和电压无功支撑：
 
 \[
-\begin{aligned}
-\tau_p \dot p_f &= p_{ref}-p_f,\qquad \tau_q \dot q_f=q_{ref}-q_f, \\
-(i_{d,ref},i_{q,ref}) &= \mathrm{clip}\bigl(p_f/V_{bus},\,q_f/V_{bus}\bigr), \\
-\tau_i \dot i_d &= i_{d,ref}-i_d,\qquad \tau_i \dot i_q=i_{q,ref}-i_q, \\
-\dot\theta_{pll} &= 2\pi\,\Delta f,\qquad \frac{d}{dt}\int\varepsilon=\varepsilon.
-\end{aligned}
+q_{ref}\leftarrow q_{ref}+k_v(V_{ref}-V),\qquad
+\tau_p\dot p_{out}=p_{ref}-p_{out},\quad
+\tau_q\dot q_{out}=q_{ref}-q_{out}.
 \]
 
-注入命令由 \(i_d,i_q\) 经电压还原为功率并限幅后乘以 \(p_{rated}\)。`metrics()` 输出 \(f_{nom}+\Delta f\)。
+它还包含 `p_measure_pu`、`q_measure_pu` 的一阶测量滤波状态。
 
-#### `gfm_inverter`（构网型逆变器）
-
-包含虚拟惯量摆动方程、P-f/Q-V 下垂和电压内环。记频率偏差 \(\Delta f\)，下垂命令：
+`gfl_inverter` 包含同步旋转坐标系 PLL、P/Q 外环和 d/q 电流内环。PLL 使用
 
 \[
-\begin{aligned}
-p_{cmd}&=p_{ref}-k_{pf}\Delta f,\qquad q_{cmd}=q_{ref}+k_{qv}(V_{ref}-V_{bus}), \\
-(p_{cmd},q_{cmd}) &\leftarrow \mathrm{clip}(p_{cmd},q_{cmd}), \\
-2H\,\dot{\Delta f} &= p_{ref}-p_{meas}-D\,\Delta f,\qquad \dot\theta=2\pi\,\Delta f, \\
-\tau_p \dot p_{out} &= p_{cmd}-p_{out},\qquad \tau_p \dot q_{out}=q_{cmd}-q_{out}, \\
-\tau_m \dot p_{meas} &= p_{out}-p_{meas},\qquad \tau_m \dot q_{meas}=q_{out}-q_{meas}, \\
-V_{tgt}&=V_{ref}+k_{vq}(q_{ref}-q_{meas}),\qquad \tau_v \dot V_{int}=V_{tgt}-V_{int}.
-\end{aligned}
+e_{pll}=\sin(\theta_{bus}-\theta_{pll}),\qquad
+\Delta f=k_p e_{pll}+k_i\int e_{pll}\,dt,
 \]
 
-其中 \(k_{pf}\)、\(k_{qv}\)、\(H\)、\(D\)、\(k_{vq}\) 分别对应 `p_droop_pu_per_hz`、`q_droop_pu_per_pu`、`inertia_s`、`damping_pu_per_hz`、`voltage_droop_pu_per_pu`（可选，默认 0）。注入命令由 \(p_{out},q_{out}\) 限流后乘以 \(p_{rated}\)。`metrics()` 输出 \(f_{nom}+\Delta f\) 与 \(V_{int}\)。
+并以 \(\dot\theta_{pll}=2\pi\Delta f\) 推进相角。其状态包括 P/Q 滤波量、d/q 电流、PLL 相角和积分器；`metrics()` 输出估计频率。
 
-#### 数值推进与网络求解
+`gfm_inverter` 包含虚拟惯量、阻尼、P-f/Q-V 下垂和内部电压环：
 
-初始化严格采用 QSTS 断面：\(P(0)=P^\star\)、\(Q(0)=Q^\star\)、\(V(0)=V^\star\)。每个秒级步长先按显式 Euler 推进各设备的内部状态，再由 `injection()` 得到其注入网络的 P/Q，随后通过 `PowerFlowSolver.solve()` 重解网络代数方程，用得到的母线电压推进下一步。因此当前版本是“动态设备状态 + 准稳态网络代数求解”的 RMS 验证框架，不是电磁暂态仿真。后续可保留 `RMSDevice` 接口，替换为更完整的 GFL/GFM/DER_A 或同步机模型，并替换网络代数求解部分。
+\[
+p_{cmd}=p_{ref}-k_{pf}\Delta f,\qquad
+q_{cmd}=q_{ref}+k_{qv}(V_{ref}-V),
+\]
 
-`RMSState` 保存当前秒级时间、设备动态状态 \(x\)、母线复电压 \(z\) 及潮流 warm-start 状态；`RMSResult` 返回时序汇总表、母线相电压表和最终状态。RMS 编排不依赖 `OpenDSSSolver` 的具体类、只依赖 `PowerFlowSolver`，当前入口选择 OpenDSS 后端。
+\[
+2H\dot{\Delta f}=p_{ref}-p_{meas}-D\Delta f.
+\]
+
+它输出频率和内部电压指标，并以一阶功率、测量和电压时间常数表征控制动态。
 
 ### `rms_config.json`
 
-该文件只补充 QSTS 中不存在的动态信息。`device_id` 必须引用既有 `network.json` 中的 DER，不能重复定义接入母线、额定功率或 QSTS 时序；`model_type` 必须是上述三种之一，且每台动态设备还需给出 `current_limit_pu`。例如 12 节点算例为全部五台 DER 配置了动态参数和三个场景：
+该文件只描述 QSTS 时序中没有的动态模型和场景。每个 `device_id` 必须引用 `network.json` 内已有的非负荷设备，不重复定义拓扑、接入母线或额定功率。12 节点算例的结构为：
 
 ```json
 {
   "nominal_frequency_hz": 60.0,
   "dynamic_devices": [
-    {"device_id": "PV1", "model_type": "gfl_inverter", "current_limit_pu": 1.25, "pll_kp_hz_per_rad": 12.0, "pll_ki_hz_per_rad_s": 180.0, "tau_p_control_s": 0.08, "tau_q_control_s": 0.06, "tau_current_s": 0.015},
-    {"device_id": "PV2", "model_type": "gfm_inverter", "current_limit_pu": 1.25, "inertia_s": 1.5, "damping_pu_per_hz": 0.25, "p_droop_pu_per_hz": 0.08, "q_droop_pu_per_pu": 2.0, "voltage_droop_pu_per_pu": 0.5, "tau_power_control_s": 0.08, "tau_power_measure_s": 0.04, "tau_voltage_control_s": 0.05},
-    {"device_id": "Wind1", "model_type": "aggregate_der", "current_limit_pu": 1.20, "tau_p_control_s": 0.25, "tau_q_control_s": 0.15, "tau_measure_s": 0.05, "voltage_support_pu_per_pu": 1.0},
-    {"device_id": "BESS1", "model_type": "gfl_inverter", "current_limit_pu": 1.30, "pll_kp_hz_per_rad": 10.0, "pll_ki_hz_per_rad_s": 150.0, "tau_p_control_s": 0.10, "tau_q_control_s": 0.08, "tau_current_s": 0.02},
-    {"device_id": "EV1", "model_type": "aggregate_der", "current_limit_pu": 1.10, "tau_p_control_s": 0.30, "tau_q_control_s": 0.20, "tau_measure_s": 0.10, "voltage_support_pu_per_pu": 0.0}
+    {
+      "device_id": "PV1",
+      "model_type": "gfl_inverter",
+      "current_limit_pu": 1.25,
+      "pll_kp_hz_per_rad": 12.0,
+      "pll_ki_hz_per_rad_s": 180.0,
+      "tau_p_control_s": 0.08,
+      "tau_q_control_s": 0.06,
+      "tau_current_s": 0.015
+    }
   ],
   "scenarios": {
-    "flat_run": {"dt_s": 0.02, "t_end_s": 2.0, "events": []},
     "load_step": {
       "dt_s": 0.02,
       "t_end_s": 2.0,
-      "events": [{"time_s": 1.0, "type": "load_scale", "device_id": "Load12", "p_multiplier": 1.10, "q_multiplier": 1.10}]
-    },
-    "der_trip": {
-      "dt_s": 0.02,
-      "t_end_s": 2.0,
-      "events": [{"time_s": 1.0, "type": "der_trip", "device_id": "PV1"}]
+      "events": [
+        {"time_s": 1.0, "type": "load_scale", "device_id": "Load12", "p_multiplier": 1.1, "q_multiplier": 1.1}
+      ]
     }
   }
 }
 ```
 
-`load_scale` 在指定时刻立即把该基础负荷的 P/Q 乘以 `p_multiplier`、`q_multiplier`；`der_trip` 在指定时刻调用该动态 DER 的 `trip()`，把其 \(P^{ref},Q^{ref}\) 目标置零，实际注入功率随后按其时间常数衰减到零。
+`gfl_inverter` 需要 PLL 参数和 P/Q、电流环时间常数；`gfm_inverter` 需要惯量、阻尼、P-f/Q-V 下垂以及功率、测量和电压环时间常数；`aggregate_der` 需要 P/Q 控制和测量时间常数，可选 `voltage_support_pu_per_pu`。三类模型均要求正的 `current_limit_pu`。
 
-### 运行 RMS
+事件类型如下：
 
-先生成 QSTS 输出，再用 `--time` 选定一个时间戳作为动态初始工作点：
+- `load_scale`：在指定时刻将目标基础负荷 P/Q 分别乘以 `p_multiplier`、`q_multiplier`。
+- `der_trip`：在指定时刻将目标动态 DER 的 P/Q 参考置为零，实际注入按照模型时间常数衰减。
 
-```powershell
-python run.py --data-dir data\radial_12bus
-python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --time "2026-01-01 12:00:00" --scenario flat_run
-python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --time "2026-01-01 12:00:00" --scenario load_step
-python run_rms.py --data-dir data\radial_12bus --qsts-output output\radial_12bus --time "2026-01-01 12:00:00" --scenario der_trip
+`radial_12bus/rms_config.json` 包含以下场景：
+
+- `flat_run`：无扰动运行，用于检查初始化稳态。
+- `load_step`：指定时刻对一个负荷施加功率阶跃。
+- `der_trip`：指定时刻使一台 DER 的有功参考降为零。
+
+先运行 QSTS，再从同一个已保存时间戳启动 RMS：
+
+```bash
+python run.py --data-dir data/radial_12bus
+python run_rms.py --data-dir data/radial_12bus --qsts-output output/radial_12bus --time "2026-01-01 12:00:00" --scenario flat_run
+python run_rms.py --data-dir data/radial_12bus --qsts-output output/radial_12bus --time "2026-01-01 12:00:00" --scenario load_step
+python run_rms.py --data-dir data/radial_12bus --qsts-output output/radial_12bus --time "2026-01-01 12:00:00" --scenario der_trip
 ```
 
-默认输出目录是 `output/<case>/rms/<scenario>/`：
+RMS 输出保存在 `output/<case>/rms/<scenario>/`；可通过 `run_rms.py --output <目录>` 覆盖：
 
-- `rms_summary.csv`：每个秒级时刻的扰动标签、潮流内部迭代次数、最小/最大电压、网损、源侧 P/Q，以及每台动态 DER 的实际注入 P/Q 与其内部状态/指标（列名形如 `<device_id 小写>_p_kw`、`<device_id 小写>_p_filter_pu`、`<device_id 小写>_frequency_hz` 等）；
-- `rms_bus_voltages.csv`：每时刻、每母线相的电压幅值和相角；
-- `rms_initialization.json`：选用的 QSTS 时间戳、初始 DER P/Q 和慢状态，便于复现工作点。
+| 文件 | 内容 |
+|---|---|
+| `rms_summary.csv` | 时间、设备动态状态、DER P/Q、频率及场景量 |
+| `rms_bus_voltages.csv` | 每个 RMS 步长的母线电压 |
+| `rms_initialization.json` | QSTS 工作点和 RMS 初值摘要 |
 
-新增 DER 类型时，继承 `DERModel`，在 `DERModel.SUPPORTED_CONTROLLERS` 登记控制器类型，并实现 profile 校验、注入、控制方程和状态更新。新增自研求解器时，在 `src/solvers/custom_pf_solver.py` 实现 `build()` 与 `solve()`，读取相同的 `NetworkModel`、`OperatingPoint` 和 `PFState`，返回 `PFResult`；QSTS、数据格式和 DER 控制器保持不变。
+## 自研求解器接入
+
+自研求解器可放在 `src/solvers/`，实现 `PowerFlowSolver` 的 `build()` 与 `solve()`。`custom_pf_solver.py` 给出了该协议的骨架；它尚不包含求解算法。至少应返回：
+
+```python
+PFResult(
+    converged=...,
+    bus_voltages=...,
+    bus_voltage_records=...,
+    branch_records=...,
+    summary=...,
+    next_state=...,
+    final_der_commands=...,
+)
+```
+
+若求解器将潮流方程与 DER 控制方程联立，`final_der_commands` 应保存联立解中的最终 DER P/Q，`next_state` 应保存下一 QSTS 时刻需要的内部状态。这样 QSTS 与 RMS 的上层流程无需针对求解器类型分支处理。
+
+## 组织新算例与设备模型
+
+一个可运行算例应具备以下文件：
+
+```text
+data/<case>/
+├── network.json
+├── network.dss
+├── load_profiles.csv
+├── der_profiles/
+└── network_topology.png
+```
+
+生成脚本通常位于 `data/generate_data/`，并同时生成 `network.json`、`network.dss`、所有时序 CSV 和拓扑图。`network.json` 的 `devices` 是 Python 模型和 OpenDSS 后端之间的设备索引：基础负荷使用 `kind: "load"`，DER 使用 `pv`、`wind`、`bess` 或 `ev`，每个 DER 通过 `profile_file` 指向自己的时序文件。
+
+新 DER 慢时标模型继承 `DERModel`，实现 profile 校验、`get_injection()`，并在有跨时段物理量时实现 `advance_state()` 与 `state_summary()`；相应的设备构造分支位于 `run.py`。新控制器类型需要登记在 `DERModel.SUPPORTED_CONTROLLERS`，并由某个 `PowerFlowSolver` 对 `DERCommand.controller_type` 和 `parameters` 给出代数求解规则。
+
+RMS 动态设备模型继承 `RMSDevice`，实现 `initialize()`、`derivative()` 和 `injection()`，并登记到 `MODEL_TYPES`。这样慢时标 QSTS 模型、潮流求解器和秒级动态模型保持独立：同一个 QSTS 工作点可以对应不同的 RMS 设备配置与扰动场景。

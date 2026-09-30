@@ -31,6 +31,7 @@ class DERModel(ABC):
         name: str,
         profile_file: Optional[str | Path] = None,
         bus_name: Optional[str] = None,
+        phases: Optional[list[int]] = None,
     ):
         """Initialize DER model.
 
@@ -41,6 +42,7 @@ class DERModel(ABC):
         self.name = name
         self.profile_file = Path(profile_file) if profile_file else None
         self.bus_name = bus_name
+        self.phases = tuple(phases or ())
         self._profile_data: Optional[pd.DataFrame] = None
 
     def load_profile(self) -> None:
@@ -149,6 +151,8 @@ class DERModel(ABC):
             for key, value in injection.items()
             if key not in {"p_kw", "q_kvar", "controller_type"}
         }
+        if self.phases:
+            parameters["terminal_nodes"] = self.phases
         if "soc" in parameters:
             parameters["soc_pct"] = parameters.pop("soc")
         return DERCommand(
@@ -169,8 +173,8 @@ class DERModel(ABC):
 class PVModel(DERModel):
     """Photovoltaic generation model."""
 
-    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
-        super().__init__(name, profile_file, bus_name)
+    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None, phases: Optional[list[int]] = None):
+        super().__init__(name, profile_file, bus_name, phases)
 
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
@@ -197,8 +201,8 @@ class PVModel(DERModel):
 class WindModel(DERModel):
     """Wind turbine generation model."""
 
-    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
-        super().__init__(name, profile_file, bus_name)
+    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None, phases: Optional[list[int]] = None):
+        super().__init__(name, profile_file, bus_name, phases)
 
     def _validate_profile(self) -> None:
         self._validate_controller_profile()
@@ -226,6 +230,7 @@ class BESSModel(DERModel):
         name: str,
         profile_file: Optional[str | Path] = None,
         bus_name: Optional[str] = None,
+        phases: Optional[list[int]] = None,
         capacity_kwh: float = 200.0,
         p_rated_kw: float = 0.0,
         reserve_soc: float = 20.0,
@@ -233,7 +238,7 @@ class BESSModel(DERModel):
         charge_efficiency: float = 0.95,
         discharge_efficiency: float = 0.95,
     ):
-        super().__init__(name, profile_file, bus_name)
+        super().__init__(name, profile_file, bus_name, phases)
         self._soc = initial_soc
         self.capacity_kwh = capacity_kwh
         self.p_rated_kw = p_rated_kw
@@ -295,8 +300,8 @@ class BESSModel(DERModel):
 class EVModel(DERModel):
     """Electric Vehicle charging model."""
 
-    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None):
-        super().__init__(name, profile_file, bus_name)
+    def __init__(self, name: str, profile_file: Optional[str | Path] = None, bus_name: Optional[str] = None, phases: Optional[list[int]] = None):
+        super().__init__(name, profile_file, bus_name, phases)
 
     def _validate_profile(self) -> None:
         self._validate_controller_profile()

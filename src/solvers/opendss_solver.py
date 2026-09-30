@@ -110,7 +110,8 @@ class OpenDSSSolver:
                     continue
                 # 平均相电压作为控制输入
                 prefix = f"{self._network().device(name)['bus'].lower()}."
-                values = [abs(value) for key, value in voltages.items() if key.lower().startswith(prefix)]
+                terminal_nodes = {int(node) for node in command.parameters.get("terminal_nodes", ())}
+                values = [abs(value) for key, value in voltages.items() if key.lower().startswith(prefix) and (not terminal_nodes or int(key.rsplit(".", 1)[1]) in terminal_nodes)]
                 if not values:
                     raise ValueError(
                         f"Volt-VAR DER {name!r} found no bus voltage for bus "
