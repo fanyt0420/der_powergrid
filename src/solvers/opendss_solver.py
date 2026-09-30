@@ -60,15 +60,51 @@ class OpenDSSSolver:
         else:
             raise ValueError(f"No OpenDSS mapping for DER kind {kind!r}.")
 
+    def _set_der_commands(self, der_commands: Mapping[str, DERCommand]) -> None:
+        for name, command in der_commands.items():
+            self._set_der_command(name, command)
+
     def solve(self, operating_point: OperatingPoint, state: PFState | None, context: SolverContext | None = None) -> PFResult:
         self._network()
         self._set_loads(operating_point.load_pq_kva)
-        for name, command in operating_point.der_commands.items():
-            self._set_der_command(name, command)
+
+        commands: dict[str, DERCommand] = dict(operating_point.der_commands)
+        self._set_der_commands(commands)
+
         solution = dss.ActiveCircuit.Solution
         solution.Solve()
         if not solution.Converged:
             raise RuntimeError(f"OpenDSS power flow did not converge at timestamp {operating_point.time}.")
+
+        max_control_iterations = 20
+        control_iterations = 0
+        while True:
+            voltages = self._bus_voltage_records()[1]
+            updated = {}
+            for name, command in commands.items():
+                if command.controller_type != "volt_var":
+                    continue
+                # 平均相电压作为控制输入
+                prefix = f"{self._network().device(name)['bus'].lower()}."
+                values = [abs(value) for key, value in voltages.items() if key.lower().startswith(prefix)]
+                if not values:
+                    continue
+                voltage_pu = sum(values) / len(values)
+                q_kvar = command.adjusted_q(voltage_pu)
+                if abs(q_kvar - command.q_kvar) > 1e-6:
+                    updated[name] = command.with_q(q_kvar)
+            if not updated:
+                break
+            control_iterations += 1
+            if control_iterations >= max_control_iterations:
+                raise RuntimeError(f"DER controls did not converge at timestamp {operating_point.time}.")
+            for name, command in updated.items():
+                commands[name] = command
+                self._set_der_command(name, command)
+            solution.Solve()
+            if not solution.Converged:
+                raise RuntimeError(f"OpenDSS power flow did not converge at timestamp {operating_point.time}.")
+
         voltage_records, voltages = self._bus_voltage_records()
         line_records = self._line_records()
         return PFResult(
@@ -79,6 +115,8 @@ class OpenDSSSolver:
             summary=self._system_summary(voltage_records),
             iterations=int(solution.Iterations),
             next_state=PFState(voltage_guess=voltages),
+            final_der_commands=commands,
+            control_iterations=control_iterations,
             metadata={"backend": "opendss", "context": context},
         )
 

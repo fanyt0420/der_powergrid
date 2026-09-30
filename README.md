@@ -94,9 +94,9 @@ timestamp,load_name,p_kw,q_kvar
 | --- | --- |
 | `NetworkModel` | 固定网络数据，从 `network.json` 读取 |
 | `OperatingPoint` | 某时刻全部负荷复功率与 DER 命令 |
-| `DERCommand` | 单台 DER 的 P/Q、控制器类型和参数 |
+| `DERCommand` | 单台 DER 的 P/Q、控制器类型与代数控制参数（Vref、droop、Qmin/Qmax、SOC 等） |
 | `PFState` | 上一时刻复电压初值与求解器状态 |
-| `PFResult` | 电压、线路结果、系统汇总、迭代次数、下一状态 |
+| `PFResult` | 电压、线路结果、系统汇总、迭代次数、最终 DER 命令、控制迭代次数、下一状态 |
 | `SolverContext` | 时间步、控制迭代编号、上一轮结果、未来联立方程入口 |
 
 ```python
@@ -119,12 +119,12 @@ class PowerFlowSolver(Protocol):
 
 ```text
 读取当前逐负荷 P/Q 与各 DER profile
-→ 构造 OperatingPoint
-→ PowerFlowSolver.solve(OperatingPoint, PFState)
-→ 按 PFResult 电压更新 Volt-VAR 控制器
-→ P/Q 改变则再次 solve，直到外层控制收敛
+→ 构造 OperatingPoint（含 DER 控制参数）
+→ PowerFlowSolver.solve(OperatingPoint, PFState)   // 解析网络方程与 DER 控制代数方程
 → BESS 推进 SOC，PFResult.next_state 传给下一时刻
 ```
+
+DER 控制迭代（例如 Volt-VAR 的 `Q = g(V)`）发生在求解器内部：`OpenDSSSolver` 通过“潮流 → 更新 Q → 再潮流”的内层 fixed-point 循环使其与网络方程共同收敛，最终 DER 命令保存在 `PFResult.final_der_commands`，收敛所用的控制更新次数记录在 `PFResult.control_iterations`。QSTS 每个时间点只调用一次 `solver.solve()`，自身不再做外层控制循环。
 
 PV Volt-VAR 使用：
 
@@ -139,14 +139,14 @@ BESS 的 SOC 为跨时段显式状态；其容量、初始 SOC、SOC 下限和�
 每个算例输出目录包含：
 
 - `qsts_bus_voltages.csv`：每时刻、每母线相别的电压幅值和相角；
-- `qsts_system.csv`：总负荷、外层控制迭代次数、潮流内部迭代次数、电压范围、损耗、源端功率、最终 DER P/Q 和 BESS SOC；
+- `qsts_system.csv`：总负荷、内层 DER 控制迭代次数、潮流内部迭代次数、电压范围、损耗、源端功率、最终 DER P/Q 和 BESS SOC；
 - `qsts_branch_results.csv`：每时刻、每条支路的电流幅值和首端 P/Q（由求解器的 `branch_records` 保存）。
 
 ## DER 模块详解
 
 ### 统一 DER 接口
 
-所有 DER 均继承 `src/der_model.py` 中的 `DERModel`。QSTS 不针对 PV、风机、储能或 EV 写类型判断；它只在每个时刻向模型请求注入命令、根据潮流结果更新控制器，并在收敛后推进状态。
+所有 DER 均继承 `src/der_model.py` 中的 `DERModel`。QSTS 不针对 PV、风机、储能或 EV 写类型判断；它只在每个时刻向模型请求注入命令（含控制器参数），并在收敛后推进跨时段状态。代数控制律（如 Volt-VAR）由求解器读取 `DERCommand` 中的 `controller_type` 与参数自行求解，不再由 QSTS 回调节点。
 
 ```python
 class DERModel:
@@ -157,16 +157,13 @@ class DERModel:
         """按时间戳返回计划 P/Q、控制器类型和参数。"""
 
     def to_command(self, injection: dict[str, object]) -> DERCommand:
-        """将模型数据转为求解器无关的 DERCommand。"""
-
-    def control_step(self, pf_result: PFResult, injection: dict[str, object]) -> dict[str, object]:
-        """根据当前潮流结果更新当前时刻控制命令。"""
+        """将模型数据转为求解器无关的 DERCommand（含控制类型和参数）。"""
 
     def advance_state(self, injection: dict[str, object], dt_hours: float) -> None:
         """将本时刻状态传递到下一时刻。"""
 ```
 
-`get_injection()`、`to_command()` 和 `control_step()` 处理同一时刻的代数关系；`advance_state()` 只在当前时刻收敛后调用，用于跨时段物理状态。
+`get_injection()` 和 `to_command()` 只产出当前时刻的计划 P/Q 与控制参数，不计算控制响应；VOLT-VAR 这类代数控制律由求解器依据 `DERCommand` 求解。`advance_state()` 只在当前时刻收敛后调用，用于跨时段物理状态（如 BESS SOC）。
 
 ### 当前 DER 类型
 
@@ -227,7 +224,7 @@ PV 在潮流求解后读取其接入母线所有相别的平均标幺电压 \(V_
 Q_{PV}=\operatorname{clip}\left[k(V_{ref}-V_{bus}),-Q_{max},Q_{max}\right]
 \]
 
-低电压时注入正无功，高电压时吸收无功。若新 Q 与上一轮不同，QSTS 将生成新 `DERCommand` 并再次调用同一求解器。这个控制器是代数、无状态的：下一时刻重新由该时刻电压计算。
+低电压时注入正无功，高电压时吸收无功。该控制器是代数、无状态的：每个时刻电压确定后，Q 由该式唯一确定。代数求解由 `PowerFlowSolver` 内部完成——`OpenDSSSolver` 以“潮流 → 更新 Q → 再潮流”的 fixed-point 循环使网络方程与该式共同收敛，最终收敛的 Q 写入 `PFResult.final_der_commands`。
 
 ### BESS SOC 状态方程
 
@@ -250,12 +247,11 @@ SOC_{t+1}=SOC_t+\frac{|P_t|\eta_{ch}\Delta t}{E}\times100,\quad P_t<0
 ```text
 1. 从 load_profiles.csv 读取所有基础负荷的 P/Q
 2. 从各 DER profile 读取计划 P/Q、controller_type 与控制参数
-3. 构造 OperatingPoint，并携带上一时刻 PFState 调用求解器
-4. 获取 PFResult：节点复电压、线路结果、系统汇总
-5. 调用每台 DER 的 control_step(PFResult, ...)
-6. 若任一 DER 的 P/Q 改变，重新构造 OperatingPoint 并再次求解
-7. 当 P/Q 不再改变时，推进 BESS 等跨时段状态
-8. 保存电压、最终 DER 命令、SOC、损耗和迭代信息
+3. 构造 OperatingPoint（含 DERCommand 控制律），并携带上一时刻 PFState 调用求解器
+4. 求解器内部联合求解网络方程与 DER 控制代数方程，直到共同收敛
+5. 获取 PFResult：电压、线路结果、系统汇总、最终 DER 命令、控制迭代次数
+6. 推进 BESS 等跨时段状态，PFState 传给下一时刻
+7. 保存电压、最终 DER 命令、SOC、损耗和迭代信息
 ```
 
 对于网络方程，求解器在给定负荷和 DER 注入时求解三相非线性潮流：
@@ -264,7 +260,7 @@ SOC_{t+1}=SOC_t+\frac{|P_t|\eta_{ch}\Delta t}{E}\times100,\quad P_t<0
 \frac{S_i^*}{V_i^*}=\sum_jY_{ij}V_j
 \]
 
-当前 `OpenDSSSolver` 用 OpenDSS 完成该方程组求解。PV Volt-VAR 控制方程不直接嵌入 OpenDSS 的内部牛顿迭代，而通过“潮流 → 控制器 → 潮流”的外层固定点迭代与电网方程耦合。`control_iterations` 记录外层控制更新次数，`pf_iterations` 记录 OpenDSS 单次潮流的内部迭代次数。
+当前 `OpenDSSSolver` 用 OpenDSS 完成该方程组求解，并以“潮流 → 按 `DERCommand` 控制律更新 Q → 再潮流”的内层固定点迭代把网络方程与 DER 控制方程耦合到同一稳态解；`control_iterations` 记录该内层控制更新次数，`pf_iterations` 记录 OpenDSS 单次潮流的内部迭代次数，最终收敛命令存于 `PFResult.final_der_commands`。
 
 ## 状态传递详解
 

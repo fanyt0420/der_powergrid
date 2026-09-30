@@ -20,14 +20,14 @@ def run_qsts(
     solver: PowerFlowSolver,
     der_models: Sequence[DERModel],
     load_profile_file: str | Path,
-    max_control_iterations: int = 20,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run QSTS through a backend-neutral PowerFlowSolver.
 
-    Time is taken from the ``timestamp`` column of the load profile rather than a
-    fixed hour index. The time step ``dt_hours`` is inferred per point from the
-    distance to the next timestamp, so neither the solver nor the DER models assume
-    any fixed step size.
+    For each timestamp QSTS builds an :class:`OperatingPoint` and calls the solver
+    exactly once. The solver joins the network equations and the algebraic DER
+    control laws internally, and returns the final DER commands in
+    ``PFResult.final_der_commands``. QSTS only owns time advancement and the
+    cross-time state update (BESS SOC via ``advance_state``).
     """
     profile = pd.read_csv(load_profile_file)
     required = {"timestamp", "load_name", "p_kw", "q_kvar"}
@@ -67,41 +67,18 @@ def run_qsts(
         operating_point = OperatingPoint(time=time, load_pq_kva=loads, der_commands=commands)
 
         result = solver.solve(operating_point, pf_state, SolverContext(time_step_hours=dt_hours))
-        control_iterations = 0
-        while control_iterations < max_control_iterations:
-            updated_injections = {
-                model.name: model.control_step(result, injections[model.name])
-                for model in der_models
-            }
-            changed = any(
-                abs(float(updated_injections[name]["p_kw"]) - commands[name].p_kw) > 1e-6
-                or abs(float(updated_injections[name]["q_kvar"]) - commands[name].q_kvar) > 1e-6
-                for name in commands
-            )
-            if not changed:
-                break
-            injections = updated_injections
-            commands = {model.name: model.to_command(injections[model.name]) for model in der_models}
-            operating_point = OperatingPoint(time=time, load_pq_kva=loads, der_commands=commands)
-            control_iterations += 1
-            result = solver.solve(
-                operating_point,
-                result.next_state,
-                SolverContext(time_step_hours=dt_hours, control_iteration=control_iterations, previous_result=result),
-            )
-        else:
-            raise RuntimeError(f"DER controls did not converge at timestamp {_ts_str(ts)}.")
 
         for model in der_models:
             model.advance_state(injections[model.name], dt_hours)
         pf_state = result.next_state
 
+        final_commands = result.final_der_commands or commands
         ts_text = _ts_str(ts)
         voltage_rows.extend({"timestamp": ts_text, **record} for record in result.bus_voltage_records)
         branch_rows.extend({"timestamp": ts_text, **record} for record in result.branch_records)
         injection_summary = {
             f"{name.lower()}_{quantity}": getattr(command, quantity)
-            for name, command in commands.items()
+            for name, command in final_commands.items()
             for quantity in ("p_kw", "q_kvar")
         }
         state_summary = {key: value for model in der_models for key, value in model.state_summary().items()}
@@ -110,7 +87,7 @@ def run_qsts(
             "dt_hours": dt_hours,
             "total_load_kw": sum(value.real for value in loads.values()),
             "total_load_kvar": sum(value.imag for value in loads.values()),
-            "control_iterations": control_iterations,
+            "control_iterations": result.control_iterations,
             "pf_iterations": result.iterations,
             **result.summary,
             **injection_summary,

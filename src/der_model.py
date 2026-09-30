@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.power_flow import DERCommand, PFResult
+from src.power_flow import DERCommand
 
 
 class DERModel(ABC):
@@ -128,25 +128,6 @@ class DERModel(ABC):
             controller_type=str(injection.get("controller_type", "constant_pq")),
             parameters=parameters,
         )
-
-    def control_step(self, pf_result: PFResult, injection: Dict[str, Any]) -> Dict[str, Any]:
-        """Evaluate an algebraic DER controller after one OpenDSS power-flow solve."""
-        if injection.get("controller_type") != "volt_var" or not self.bus_name:
-            return injection
-
-        prefix = f"{self.bus_name.lower()}."
-        voltages = [abs(value) for key, value in pf_result.bus_voltages.items() if key.lower().startswith(prefix)]
-        if not voltages:
-            return injection
-
-        voltage_pu = sum(voltages) / len(voltages)
-        q_limit = float(injection.get("q_limit_kvar", 0.0))
-        q_command = float(injection.get("droop_kvar_per_pu", 0.0)) * (
-            float(injection.get("v_ref_pu", 1.0)) - voltage_pu
-        )
-        updated = dict(injection)
-        updated["q_kvar"] = max(-q_limit, min(q_limit, q_command))
-        return updated
 
     def advance_state(self, injection: Dict[str, Any], dt_hours: float) -> None:
         """Advance internal state after a converged QSTS time step."""
