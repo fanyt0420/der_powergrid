@@ -1,15 +1,15 @@
 Redirect "D:\PythonProject\PythonFiles\pythonProject\opendss_qsts_der\data\ieee13_unbalanced_der\ieee13_base\IEEE13Nodeckt.dss"
-New Generator.PV_632_A phases=1 bus1=632.1 kV=2.4 kW=0 kvar=0
-New Generator.PV_670_C phases=1 bus1=670.3 kV=2.4 kW=0 kvar=0
-New Generator.PV_671_A phases=1 bus1=671.1 kV=2.4 kW=0 kvar=0
-New Generator.PV_675_A phases=1 bus1=675.1 kV=2.4 kW=0 kvar=0
-New Generator.PV_675_C phases=1 bus1=675.3 kV=2.4 kW=0 kvar=0
-New Generator.PV_634_ABC phases=3 bus1=634.1.2.3 kV=0.48 kW=0 kvar=0
-New Storage.BESS_671_B phases=1 bus1=671.2 kV=2.4 kWrated=100 kWhrated=400 %stored=55 %reserve=20 dispmode=EXTERNAL kW=0 kvar=0
-New Storage.BESS_645_B phases=1 bus1=645.2 kV=2.4 kWrated=60 kWhrated=240 %stored=60 %reserve=20 dispmode=EXTERNAL kW=0 kvar=0
-New Storage.BESS_684_A phases=1 bus1=684.1 kV=2.4 kWrated=50 kWhrated=200 %stored=50 %reserve=20 dispmode=EXTERNAL kW=0 kvar=0
+New Generator.PV_632_A phases=1 bus1=632.1 conn=wye kV=2.4 kW=0 kvar=0
+New Generator.PV_670_C phases=1 bus1=670.3 conn=wye kV=2.4 kW=0 kvar=0
+New Generator.PV_671_A phases=1 bus1=671.1 conn=wye kV=2.4 kW=0 kvar=0
+New Generator.PV_675_A phases=1 bus1=675.1 conn=wye kV=2.4 kW=0 kvar=0
+New Generator.PV_675_C phases=1 bus1=675.3 conn=wye kV=2.4 kW=0 kvar=0
+New Generator.PV_634_ABC phases=3 bus1=634.1.2.3 conn=wye kV=0.48 kW=0 kvar=0
+New Storage.BESS_671_B phases=1 bus1=671.2 conn=wye kV=2.4 kWrated=100 kWhrated=400 %stored=55 %reserve=20 dispmode=EXTERNAL kW=0 kvar=0
+New Storage.BESS_645_B phases=1 bus1=645.2 conn=wye kV=2.4 kWrated=60 kWhrated=240 %stored=60 %reserve=20 dispmode=EXTERNAL kW=0 kvar=0
+New Storage.BESS_684_A phases=1 bus1=684.1 conn=wye kV=2.4 kWrated=50 kWhrated=200 %stored=50 %reserve=20 dispmode=EXTERNAL kW=0 kvar=0
 New Load.EV_671_C phases=1 bus1=671.3 conn=wye kV=2.4 kW=0 kvar=0
 New Load.EV_675_B phases=1 bus1=675.2 conn=wye kV=2.4 kW=0 kvar=0
 New Load.EV_611_C phases=1 bus1=611.3 conn=wye kV=2.4 kW=0 kvar=0
-New Generator.Wind_680_ABC phases=3 bus1=680.1.2.3 kV=2.4 kW=0 kvar=0
+New Generator.Wind_680_ABC phases=3 bus1=680.1.2.3 conn=wye kV=4.16 kW=0 kvar=0
 Solve

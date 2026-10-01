@@ -209,6 +209,8 @@ Volt-VAR 文件使用 `q_limit_kvar`、`v_ref_pu` 与 `droop_kvar_per_pu`；储�
 
 PV 采用各自的 Volt-VAR 时序控制；储能在白天充电、傍晚放电，并受额定功率、能量容量、效率和 SOC 上下限约束；EV 在晚间充电窗口接入；风电按给定有功时序运行。IEEE 基础馈线来源见 [IEEE13Nodeckt.dss](https://github.com/dss-extensions/electricdss-tst/blob/master/Version8/Distrib/IEEETestCases/13Bus/IEEE13Nodeckt.dss)。
 
+DER 的 `kv` 与 OpenDSS 元件 `kV` 一致：两相和三相设备填线电压；单相 wye 设备填相—中性点电压；单相 delta 或相—相设备填线电压。因此，4.16 kV 母线上的三相 `Wind_680_ABC` 为 4.16 kV，单相 wye DER 为 2.4 kV，0.48 kV 低压侧的三相 `PV_634_ABC` 为 0.48 kV。
+
 ## 潮流求解接口
 
 `src/power_flow.py` 将网络、潮流输入、潮流结果和求解器状态分开：

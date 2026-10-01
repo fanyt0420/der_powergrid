@@ -112,7 +112,7 @@ def main() -> None:
         {"id": "BESS_671_B", "kind": "bess", "bus": "671", "phases": [2], "terminal_nodes": [2], "connection": "wye", "kv": 2.4, "p_rated_kw": 100, "energy_kwh": 400, "reserve_soc": 20, "initial_soc": 55}, {"id": "BESS_645_B", "kind": "bess", "bus": "645", "phases": [2], "terminal_nodes": [2], "connection": "wye", "kv": 2.4, "p_rated_kw": 60, "energy_kwh": 240, "reserve_soc": 20, "initial_soc": 60},
         {"id": "BESS_684_A", "kind": "bess", "bus": "684", "phases": [1], "terminal_nodes": [1], "connection": "wye", "kv": 2.4, "p_rated_kw": 50, "energy_kwh": 200, "reserve_soc": 20, "initial_soc": 50}, {"id": "EV_671_C", "kind": "ev", "bus": "671", "phases": [3], "terminal_nodes": [3], "connection": "wye", "kv": 2.4, "p_rated_kw": 60},
         {"id": "EV_675_B", "kind": "ev", "bus": "675", "phases": [2], "terminal_nodes": [2], "connection": "wye", "kv": 2.4, "p_rated_kw": 50}, {"id": "EV_611_C", "kind": "ev", "bus": "611", "phases": [3], "terminal_nodes": [3], "connection": "wye", "kv": 2.4, "p_rated_kw": 40},
-        {"id": "Wind_680_ABC", "kind": "wind", "bus": "680", "phases": [1, 2, 3], "terminal_nodes": [1, 2, 3], "connection": "wye", "kv": 2.4, "p_rated_kw": 120},
+        {"id": "Wind_680_ABC", "kind": "wind", "bus": "680", "phases": [1, 2, 3], "terminal_nodes": [1, 2, 3], "connection": "wye", "kv": 4.16, "p_rated_kw": 120},
     ]
     for device in ders:
         device["profile_file"] = f"der_profiles/{device['id'].lower()}.csv"
@@ -123,11 +123,11 @@ def main() -> None:
     for device in ders:
         phases, count, kv = ".".join(map(str, device["terminal_nodes"])), len(device["terminal_nodes"]), device["kv"]
         if device["kind"] in {"pv", "wind"}:
-            dss.append(f"New Generator.{device['id']} phases={count} bus1={device['bus']}.{phases} kV={kv} kW=0 kvar=0")
+            dss.append(f"New Generator.{device['id']} phases={count} bus1={device['bus']}.{phases} conn={device['connection']} kV={kv} kW=0 kvar=0")
         elif device["kind"] == "ev":
             dss.append(f"New Load.{device['id']} phases={count} bus1={device['bus']}.{phases} conn=wye kV={kv} kW=0 kvar=0")
         else:
-            dss.append(f"New Storage.{device['id']} phases={count} bus1={device['bus']}.{phases} kV={kv} kWrated={device['p_rated_kw']} kWhrated={device['energy_kwh']} %stored={device['initial_soc']} %reserve={device['reserve_soc']} dispmode=EXTERNAL kW=0 kvar=0")
+            dss.append(f"New Storage.{device['id']} phases={count} bus1={device['bus']}.{phases} conn={device['connection']} kV={kv} kWrated={device['p_rated_kw']} kWhrated={device['energy_kwh']} %stored={device['initial_soc']} %reserve={device['reserve_soc']} dispmode=EXTERNAL kW=0 kvar=0")
     (CASE / "network.dss").write_text("\n".join([*dss, "Solve", ""]), encoding="utf-8")
 
     shape = [.55, .52, .5, .5, .53, .62, .72, .82, .9, .96, 1, 1.02, 1, 1.01, 1.05, 1.1, 1.18, 1.25, 1.3, 1.28, 1.15, .95, .75, .65]

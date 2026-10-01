@@ -1427,7 +1427,7 @@
         3
       ],
       "connection": "wye",
-      "kv": 2.4,
+      "kv": 4.16,
       "p_rated_kw": 120,
       "profile_file": "der_profiles/wind_680_abc.csv"
     }
