@@ -1,0 +1,68 @@
+{
+  "nominal_frequency_hz": 60.0,
+  "dynamic_devices": [
+    {
+      "device_id": "PV_671_A",
+      "model_type": "gfl_inverter",
+      "current_limit_pu": 1.2,
+      "pll_kp_hz_per_rad": 8.0,
+      "pll_ki_hz_per_rad_s": 80.0,
+      "tau_p_control_s": 0.08,
+      "tau_q_control_s": 0.08,
+      "tau_current_s": 0.015
+    },
+    {
+      "device_id": "BESS_671_B",
+      "model_type": "gfm_inverter",
+      "current_limit_pu": 1.2,
+      "inertia_s": 2.0,
+      "damping_pu_per_hz": 1.0,
+      "p_droop_pu_per_hz": 0.25,
+      "q_droop_pu_per_pu": 2.0,
+      "voltage_droop_pu_per_pu": 0.05,
+      "tau_power_control_s": 0.08,
+      "tau_power_measure_s": 0.04,
+      "tau_voltage_control_s": 0.05
+    },
+    {
+      "device_id": "Wind_680_ABC",
+      "model_type": "aggregate_der",
+      "current_limit_pu": 1.15,
+      "tau_p_control_s": 0.25,
+      "tau_q_control_s": 0.15,
+      "tau_measure_s": 0.05,
+      "voltage_support_pu_per_pu": 1.5
+    }
+  ],
+  "scenarios": {
+    "flat_run": {
+      "dt_s": 0.01,
+      "t_end_s": 2.0,
+      "events": []
+    },
+    "pv_trip": {
+      "dt_s": 0.01,
+      "t_end_s": 2.0,
+      "events": [
+        {
+          "time_s": 1.0,
+          "type": "der_trip",
+          "device_id": "PV_671_A"
+        }
+      ]
+    },
+    "load_step": {
+      "dt_s": 0.01,
+      "t_end_s": 2.0,
+      "events": [
+        {
+          "time_s": 1.0,
+          "type": "load_scale",
+          "device_id": "671",
+          "p_multiplier": 1.1,
+          "q_multiplier": 1.1
+        }
+      ]
+    }
+  }
+}

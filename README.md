@@ -13,28 +13,21 @@ QSTS 计算每个时刻的稳态潮流，并传递储能 SOC 等慢状态。RMS 
 ```text
 data/
 ├── generate_data/
-│   ├── radial_12bus.py            # 12 节点径向配电网数据生成器
 │   ├── ieee13_unbalanced_der.py   # IEEE 13 节点三相不平衡数据生成器
 │   └── topology_plot.py           # 拓扑图绘制工具
-├── radial_12bus/
-│   ├── network.json
-│   ├── network.dss
-│   ├── load_profiles.csv
-│   ├── der_profiles/
-│   ├── rms_config.json
-│   └── network_topology.png
 └── ieee13_unbalanced_der/
     ├── network.json
     ├── network.dss
     ├── ieee13_base/               # IEEE 13 节点 OpenDSS 基础模型
     ├── load_profiles.csv
     ├── der_profiles/
+    ├── rms_config.json
     └── network_topology.png
 
 src/
 ├── power_flow.py                  # 网络、潮流输入/输出和求解器接口
 ├── profile_store.py               # 负荷与 DER 的 T × N 时序数组和 SOC 批量更新
-├── der_model.py                   # PV、风电、储能、EV 的慢时标模型
+├── der_model.py                   # PV、风电、储能、EV 的模型
 ├── qsts.py                        # QSTS 时序调度
 ├── rms_model.py                   # RMS 工作点、设备模型和时间推进
 └── solvers/
@@ -55,34 +48,6 @@ output/                            # 仿真结果
 ```bash
 pip install -r requirements.txt
 ```
-
-### 12 节点径向算例
-
-生成数据：
-
-```bash
-python data/generate_data/radial_12bus.py
-```
-
-运行 24 小时 QSTS：
-
-```bash
-python run.py --data-dir data/radial_12bus
-```
-
-结果位于 `output/radial_12bus/`。
-
-从中午 12:00 的 QSTS 工作点启动 RMS：
-
-```bash
-python run_rms.py ^
-  --data-dir data/radial_12bus ^
-  --qsts-output output/radial_12bus ^
-  --time "2026-01-01 12:00:00" ^
-  --scenario load_step
-```
-
-PowerShell 中也可以将命令写成单行；Linux/macOS 请将 `^` 替换为 `\`。
 
 ### IEEE 13 节点三相不平衡高 DER 渗透率算例
 
@@ -182,20 +147,6 @@ Volt-VAR 文件使用 `q_limit_kvar`、`v_ref_pu` 与 `droop_kvar_per_pu`；储�
 
 ## 算例设定
 
-### `radial_12bus`
-
-这是一个合成的 12 节点径向网络，含 12 个基础负荷、12 条支路和 5 台 DER：
-
-| 设备 | 接入节点 | 额定/用途 | 控制 |
-|---|---:|---|---|
-| PV1 | b4 | 150 kW | Volt-VAR |
-| PV2 | b10 | 80 kW | 恒 P/Q |
-| Wind1 | b7 | 72 kW 峰值 | 恒 P/Q |
-| BESS1 | b6 | 80 kW / 500 kWh | SOC 时序调度 |
-| EV1 | b12 | 受控充电负荷 | 恒 P/Q |
-
-该算例提供 `rms_config.json`，可作为 QSTS 到 RMS 的完整示例。
-
 ### `ieee13_unbalanced_der`
 
 该算例基于 IEEE 13 Node Test Feeder 的三相不平衡网络。规范 JSON 包含源侧变压器、三台单相调压器及其控制参数、`633–634` 降压变压器、全部线路三相 R/X/C 矩阵、`671–692` 开关、两组固定电容器，以及各负荷的接线方式和 OpenDSS 负荷模型。DER 以单相和三相形式分散接入，形成较高的渗透率：
@@ -208,8 +159,6 @@ Volt-VAR 文件使用 `q_limit_kvar`、`v_ref_pu` 与 `droop_kvar_per_pu`；储�
 | 风电 | Wind_680_ABC | 120 kW |
 
 PV 采用各自的 Volt-VAR 时序控制；储能在白天充电、傍晚放电，并受额定功率、能量容量、效率和 SOC 上下限约束；EV 在晚间充电窗口接入；风电按给定有功时序运行。IEEE 基础馈线来源见 [IEEE13Nodeckt.dss](https://github.com/dss-extensions/electricdss-tst/blob/master/Version8/Distrib/IEEETestCases/13Bus/IEEE13Nodeckt.dss)。
-
-DER 的 `kv` 与 OpenDSS 元件 `kV` 一致：两相和三相设备填线电压；单相 wye 设备填相—中性点电压；单相 delta 或相—相设备填线电压。因此，4.16 kV 母线上的三相 `Wind_680_ABC` 为 4.16 kV，单相 wye DER 为 2.4 kV，0.48 kV 低压侧的三相 `PV_634_ABC` 为 0.48 kV。
 
 ## 潮流求解接口
 
@@ -435,14 +384,14 @@ q_{cmd}=q_{ref}+k_{qv}(V_{ref}-V),
 
 ### `rms_config.json`
 
-该文件只描述 QSTS 时序中没有的动态模型和场景。每个 `device_id` 必须引用 `network.json` 内已有的非负荷设备，不重复定义拓扑、接入母线或额定功率。12 节点算例的结构为：
+该文件只描述 QSTS 时序中没有的动态模型和场景。每个 `device_id` 必须引用 `network.json` 内已有的非负荷设备，不重复定义拓扑、接入母线或额定功率。IEEE-13 算例的配置结构为：
 
 ```json
 {
   "nominal_frequency_hz": 60.0,
   "dynamic_devices": [
     {
-      "device_id": "PV1",
+      "device_id": "PV_671_A",
       "model_type": "gfl_inverter",
       "current_limit_pu": 1.25,
       "pll_kp_hz_per_rad": 12.0,
@@ -457,7 +406,7 @@ q_{cmd}=q_{ref}+k_{qv}(V_{ref}-V),
       "dt_s": 0.02,
       "t_end_s": 2.0,
       "events": [
-        {"time_s": 1.0, "type": "load_scale", "device_id": "Load12", "p_multiplier": 1.1, "q_multiplier": 1.1}
+        {"time_s": 1.0, "type": "load_scale", "device_id": "671", "p_multiplier": 1.1, "q_multiplier": 1.1}
       ]
     }
   }
@@ -471,19 +420,21 @@ q_{cmd}=q_{ref}+k_{qv}(V_{ref}-V),
 - `load_scale`：在指定时刻将目标基础负荷 P/Q 分别乘以 `p_multiplier`、`q_multiplier`。
 - `der_trip`：在指定时刻将目标动态 DER 的 P/Q 参考置为零，实际注入按照模型时间常数衰减。
 
-`radial_12bus/rms_config.json` 包含以下场景：
+`ieee13_unbalanced_der/rms_config.json` 包含以下场景：
 
 - `flat_run`：无扰动运行，用于检查初始化稳态。
 - `load_step`：指定时刻对一个负荷施加功率阶跃。
-- `der_trip`：指定时刻使一台 DER 的有功参考降为零。
+- `pv_trip`：在 1 s 时使 `PV_671_A` 的有功和无功参考降为零。
+
+其中 `PV_671_A` 使用 GFL inverter，`BESS_671_B` 使用 GFM inverter，三相 `Wind_680_ABC` 使用 aggregate DER；因此同一 RMS 断面同时覆盖三类动态设备模型。
 
 先运行 QSTS，再从同一个已保存时间戳启动 RMS：
 
 ```bash
-python run.py --data-dir data/radial_12bus
-python run_rms.py --data-dir data/radial_12bus --qsts-output output/radial_12bus --time "2026-01-01 12:00:00" --scenario flat_run
-python run_rms.py --data-dir data/radial_12bus --qsts-output output/radial_12bus --time "2026-01-01 12:00:00" --scenario load_step
-python run_rms.py --data-dir data/radial_12bus --qsts-output output/radial_12bus --time "2026-01-01 12:00:00" --scenario der_trip
+python run.py --data-dir data/ieee13_unbalanced_der
+python run_rms.py --data-dir data/ieee13_unbalanced_der --qsts-output output/ieee13_unbalanced_der --time "2026-01-01 12:00:00" --scenario flat_run
+python run_rms.py --data-dir data/ieee13_unbalanced_der --qsts-output output/ieee13_unbalanced_der --time "2026-01-01 12:00:00" --scenario load_step
+python run_rms.py --data-dir data/ieee13_unbalanced_der --qsts-output output/ieee13_unbalanced_der --time "2026-01-01 12:00:00" --scenario pv_trip
 ```
 
 RMS 输出保存在 `output/<case>/rms/<scenario>/`；可通过 `run_rms.py --output <目录>` 覆盖：
