@@ -10,7 +10,7 @@ from typing import Any, Mapping
 from dss import dss
 import numpy as np
 
-from src.power_flow import ConstraintResult, DERCommand, HostingCapacityMetrics, NetworkModel, OperatingPoint, PFResult, PFState, SolverContext
+from src.power_flow import DERCommand, NetworkModel, OperatingPoint, PFResult, PFState, SolverContext
 
 
 class OpenDSSSolver:
@@ -140,13 +140,12 @@ class OpenDSSSolver:
         voltage_records, voltages = self._bus_voltage_records()
         branch_records = self._branch_records()
         summary = self._system_summary(voltage_records)
-        constraints, hosting = self._evaluate_constraints(voltage_records, voltages, branch_records, summary)
         return PFResult(
             converged=True,
             bus_voltages=voltages,
             bus_voltage_records=tuple(voltage_records),
             branch_records=tuple(branch_records),
-            summary={**summary, **constraints.summary(), **hosting.summary()},
+            summary=summary,
             iterations=pf_iterations_last,
             next_state=PFState(voltage_guess=voltages),
             final_der_commands=commands,
@@ -155,8 +154,6 @@ class OpenDSSSolver:
             pf_iterations_total=pf_iterations_total,
             pf_iterations_last=pf_iterations_last,
             metadata={"backend": "opendss", "context": context},
-            constraints=constraints,
-            hosting_capacity=hosting,
         )
 
     @staticmethod
@@ -204,79 +201,18 @@ class OpenDSSSolver:
         terminal_p = sum(value.real for value in phase_powers)
         terminal_q = sum(value.imag for value in phase_powers)
         max_current = max((float(currents[2 * item]) for item in range(count)), default=0.0)
-        normal_amps = float(branch.get("normal_amps", float("nan")))
-        rating_kva = float(sum(float(winding.get("kva", 0.0)) for winding in branch.get("windings", ())[:1]))
-        if kind == "line" or kind == "switch":
-            loading = max_current / normal_amps * 100.0 if np.isfinite(normal_amps) and normal_amps > 0 else float("nan")
-        else:
-            apparent_kva = sum(abs(value) for value in phase_powers)
-            loading = apparent_kva / rating_kva * 100.0 if rating_kva > 0 else float("nan")
         return {
             "branch": name,
             "branch_kind": kind,
             "bus1": bus1,
             "bus2": bus2,
             "max_current_a": max_current,
-            "normal_amps": normal_amps,
-            "rating_kva": rating_kva,
-            "loading_pct": loading,
-            "thermal_violation": bool(np.isfinite(loading) and loading > 100.0),
             "tap_pu": tap_pu,
             "tap_position": tap_position,
             "terminal1_p_kw": terminal_p,
             "terminal1_q_kvar": terminal_q,
-            "reverse_power_flow": bool(terminal_p < -1e-6),
+            "terminal1_apparent_kva": sum(abs(value) for value in phase_powers),
         }
-
-    def _evaluate_constraints(
-        self,
-        voltage_records: list[dict[str, Any]],
-        voltages: Mapping[str, complex],
-        branch_records: list[dict[str, Any]],
-        system: Mapping[str, float | bool],
-    ) -> tuple[ConstraintResult, HostingCapacityMetrics]:
-        limits = {"voltage_min_pu": .95, "voltage_max_pu": 1.05, "voltage_unbalance_limit_pct": 2.0, "line_loading_limit_pct": 100.0, "transformer_loading_limit_pct": 100.0, "reverse_power_tolerance_kw": 1e-6, **self._network().constraints}
-        magnitudes = np.fromiter((float(record["v_pu"]) for record in voltage_records if record["v_pu"] > 0), dtype=float)
-        unbalance = self._voltage_unbalance_pct(voltages)
-        line_loading = np.fromiter((float(record["loading_pct"]) for record in branch_records if record["branch_kind"] in {"line", "switch"} and np.isfinite(record["loading_pct"])), dtype=float)
-        transformer_loading = np.fromiter((float(record["loading_pct"]) for record in branch_records if record["branch_kind"] in {"transformer", "regulator"} and np.isfinite(record["loading_pct"])), dtype=float)
-        max_line = float(np.max(line_loading)) if len(line_loading) else float("nan")
-        max_transformer = float(np.max(transformer_loading)) if len(transformer_loading) else float("nan")
-        max_unbalance = float(np.max(unbalance)) if len(unbalance) else 0.0
-        source_p = float(system["source_p_kw"])
-        reverse_kw = max(source_p, 0.0)
-        constraints = ConstraintResult(
-            voltage_low_count=int(np.sum(magnitudes < float(limits["voltage_min_pu"]))),
-            voltage_high_count=int(np.sum(magnitudes > float(limits["voltage_max_pu"]))),
-            voltage_unbalance_count=int(np.sum(unbalance > float(limits["voltage_unbalance_limit_pct"]))),
-            line_thermal_violation_count=int(np.sum(line_loading > float(limits["line_loading_limit_pct"]))),
-            transformer_thermal_violation_count=int(np.sum(transformer_loading > float(limits["transformer_loading_limit_pct"]))),
-            min_voltage_pu=float(np.min(magnitudes)), max_voltage_pu=float(np.max(magnitudes)),
-            max_voltage_unbalance_pct=max_unbalance, max_line_loading_pct=max_line,
-            max_transformer_loading_pct=max_transformer,
-            reverse_power_flow=bool(reverse_kw > float(limits["reverse_power_tolerance_kw"])), reverse_power_kw=reverse_kw,
-        )
-        voltage_headroom = min(constraints.min_voltage_pu - float(limits["voltage_min_pu"]), float(limits["voltage_max_pu"]) - constraints.max_voltage_pu)
-        line_headroom = float(limits["line_loading_limit_pct"]) - max_line if np.isfinite(max_line) else float("nan")
-        transformer_headroom = float(limits["transformer_loading_limit_pct"]) - max_transformer if np.isfinite(max_transformer) else float("nan")
-        normalized = {"voltage": voltage_headroom / .05, "line": line_headroom / 100.0 if np.isfinite(line_headroom) else float("inf"), "transformer": transformer_headroom / 100.0 if np.isfinite(transformer_headroom) else float("inf")}
-        hosting = HostingCapacityMetrics(voltage_headroom_pu=voltage_headroom, line_loading_headroom_pct=line_headroom, transformer_loading_headroom_pct=transformer_headroom, binding_constraint=min(normalized, key=normalized.get))
-        return constraints, hosting
-
-    @staticmethod
-    def _voltage_unbalance_pct(voltages: Mapping[str, complex]) -> np.ndarray:
-        by_bus: dict[str, dict[int, complex]] = {}
-        for key, value in voltages.items():
-            bus, node = key.rsplit(".", 1)
-            by_bus.setdefault(bus.lower(), {})[int(node)] = value
-        a = complex(-.5, np.sqrt(3) / 2)
-        values = []
-        for phase_values in by_bus.values():
-            if {1, 2, 3}.issubset(phase_values):
-                positive = (phase_values[1] + a * phase_values[2] + a * a * phase_values[3]) / 3
-                negative = (phase_values[1] + a * a * phase_values[2] + a * phase_values[3]) / 3
-                values.append(100.0 * abs(negative) / max(abs(positive), 1e-12))
-        return np.asarray(values)
 
     @staticmethod
     def _system_summary(records: list[dict[str, Any]]) -> dict[str, float | bool]:

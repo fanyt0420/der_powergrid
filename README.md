@@ -106,7 +106,7 @@ python run.py --data-dir data/ieee13_unbalanced_der
 
 ### `network.json`
 
-`network.json` 是 Python 侧的规范网络描述。它包含 source、母线相别与电压等级、线路代码及三相矩阵、线路/变压器/调压器/开关支路、并联电容器、基础负荷、DER 和仿真时间轴。`NetworkModel` 保留这些字段，并提供母线、设备、支路和并联设备的整数索引，供自研 solver 直接预处理。
+`network.json` 是 Python 侧的规范网络描述。它包含 source、母线相别与电压等级、线路代码及三相矩阵、线路/变压器/调压器/开关支路、并联电容器、基础负荷、DER 和仿真时间轴。`NetworkModel` 在构造时校验母线和设备/支路引用、相别与端子、线路矩阵维数、绕组完整性与电压等级、设备接入电压及正额定值；随后提供母线、设备、支路和并联设备的整数索引，供自研 solver 直接预处理。
 
 ```json
 {
@@ -220,9 +220,10 @@ DER 的 `kv` 与 OpenDSS 元件 `kV` 一致：两相和三相设备填线电压�
 | `NetworkModel` | 静态网络、设备定义、仿真时间轴 |
 | `OperatingPoint` | 一个时刻的负荷 P/Q、DER 命令和元数据 |
 | `PFState` | 由本时刻传给下一时刻的求解器状态，例如电压初值或后端状态 |
-| `PFResult` | 收敛标志、电压、支路量、系统汇总、最终 DER 命令和下一状态 |
+| `PFResult` | 求解器返回的收敛标志、电压、原始支路潮流、系统汇总、最终 DER 命令和下一状态 |
 | `SolverContext` | 时间步长、上一时刻结果、控制迭代设置及扩展方程入口 |
 | `PowerFlowSolver` | 潮流求解器协议 |
+| `SecurityEvaluator`（位于 `qsts.py`） | 基于 `NetworkModel.constraints` 和 `PFResult` 统一计算电压、热限、反向潮流、VUF 与运行裕度 |
 
 求解器接口为：
 
@@ -235,7 +236,7 @@ result = solver.solve(
 )
 ```
 
-`PowerFlowSolver` 可以承载自研牛顿法、前推回代、潮流—控制器联立方程或其他后端。`SolverContext.extra_equations` 与 `options` 为扩展变量、约束和算法设置留出入口。QSTS 不依赖 OpenDSS 专有 API，只依赖该接口和 `PFResult` 合约。
+`PowerFlowSolver` 可以承载自研牛顿法、前推回代、潮流—控制器联立方程或其他后端。它只负责形成 `PFResult` 中的电压、支路潮流、系统量和最终 DER 命令；QSTS 内部的 `SecurityEvaluator(network)` 在其后以同一套规则计算指标，因此不同 solver 的结果可直接比较。`SolverContext.extra_equations` 与 `options` 为扩展变量、约束和算法设置留出入口。QSTS 不依赖 OpenDSS 专有 API，只依赖该接口和 `PFResult` 合约。
 
 ## OpenDSS 求解过程
 
@@ -248,6 +249,8 @@ result = solver.solve(
 5. 直到 Volt-VAR 命令收敛或达到控制迭代上限。
 
 最终潮流结果中的 `final_der_commands` 是控制迭代收敛后的命令。储能使用 OpenDSS `DispMode=EXTERNAL`，以带符号的 `kW` 指令表达充/放电：正值为向网络注入功率，负值为从网络吸收功率。SOC 更新使用最终命令和固定 QSTS 时间步长，随后传递至下一时刻。
+
+`PowerFlowSolver.solve()` 必须为每台 DER 返回 `final_der_commands`。QSTS 会检查其设备集合与 profile 中的 DER 集合完全一致；缺失或额外设备立即报错，不会回退到原始 profile 命令。
 
 给定负荷和 DER 注入时，网络求解的目标是三相非线性潮流方程：
 

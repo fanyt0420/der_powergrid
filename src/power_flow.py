@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+from math import isfinite, sqrt
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol
@@ -62,6 +63,205 @@ class NetworkModel:
         object.__setattr__(self, "shunt_index", MappingProxyType(shunt_index))
         object.__setattr__(self, "load_indices", tuple(index for index, device in enumerate(self.devices) if device["kind"] == "load"))
         object.__setattr__(self, "der_indices", tuple(index for index, device in enumerate(self.devices) if device["kind"] != "load"))
+        self._validate()
+
+    @staticmethod
+    def _phases(value: Any, location: str) -> tuple[int, ...]:
+        if not isinstance(value, (list, tuple)) or not value:
+            raise ValueError(f"{location}.phases must be a non-empty list drawn from [1, 2, 3].")
+        phases = tuple(value)
+        if any(type(phase) is not int or phase not in {1, 2, 3} for phase in phases) or len(set(phases)) != len(phases):
+            raise ValueError(f"{location}.phases must contain unique integer phases drawn from [1, 2, 3].")
+        return phases
+
+    @staticmethod
+    def _positive(value: Any, location: str, *, allow_zero: bool = False) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{location} must be a finite {'non-negative' if allow_zero else 'positive'} number.") from exc
+        if not isfinite(number) or number < 0 or (not allow_zero and number == 0):
+            raise ValueError(f"{location} must be a finite {'non-negative' if allow_zero else 'positive'} number.")
+        return number
+
+    @staticmethod
+    def _matrix(matrix: Any, size: int, location: str, *, nonnegative: bool = True) -> None:
+        if not isinstance(matrix, (list, tuple)) or len(matrix) != size:
+            raise ValueError(f"{location} must be a {size} x {size} matrix matching its phases.")
+        for row in matrix:
+            if not isinstance(row, (list, tuple)) or len(row) != size:
+                raise ValueError(f"{location} must be a {size} x {size} matrix matching its phases.")
+            for value in row:
+                try:
+                    number = float(value)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"{location} entries must be finite numbers.") from exc
+                if not isfinite(number) or (nonnegative and number < 0):
+                    raise ValueError(f"{location} entries must be finite {'non-negative ' if nonnegative else ''}numbers.")
+
+    def _bus(self, bus_id: Any, location: str) -> Mapping[str, Any]:
+        try:
+            return self.buses[self.bus_index[str(bus_id).lower()]]
+        except KeyError as exc:
+            raise ValueError(f"{location} references unknown bus {bus_id!r}.") from exc
+
+    def _terminal_phases(self, item: Mapping[str, Any], bus: Mapping[str, Any], location: str, phase_key: str = "terminal_nodes") -> tuple[int, ...]:
+        phases = self._phases(item.get(phase_key, item.get("phases")), location)
+        bus_phases = self._phases(bus.get("phases"), f"bus {bus['id']}")
+        if not set(phases).issubset(bus_phases):
+            raise ValueError(f"{location}.phases {list(phases)} are not present on bus {bus['id']!r}.")
+        return phases
+
+    def _validate_voltage(self, item: Mapping[str, Any], bus: Mapping[str, Any], phases: tuple[int, ...], location: str) -> None:
+        key = "kv" if "kv" in item else "kv_ll" if "kv_ll" in item else "kv_ln" if "kv_ln" in item else None
+        if key is None:
+            return
+        actual = self._positive(item[key], f"{location}.{key}")
+        if "nominal_kv_ll" not in bus:
+            return
+        nominal_ll = self._positive(bus["nominal_kv_ll"], f"bus {bus['id']}.nominal_kv_ll")
+        connection = str(item.get("connection", "wye")).lower()
+        expected = nominal_ll / sqrt(3.0) if key == "kv_ln" or (len(phases) == 1 and connection == "wye") else nominal_ll
+        if abs(actual - expected) > max(0.02, 0.02 * expected):
+            raise ValueError(f"{location}.{key}={actual:g} is inconsistent with bus {bus['id']!r} nominal voltage ({expected:g} kV expected).")
+
+    def _validate(self) -> None:
+        """Reject ambiguous or electrically inconsistent fixed-network input early."""
+        self._positive(self.base.get("frequency_hz"), "base.frequency_hz")
+        self._positive(self.base.get("base_kv_ll"), "base.base_kv_ll")
+        slack = self._bus(self.base.get("slack_bus"), "base.slack_bus")
+        for bus in self.buses:
+            location = f"bus {bus['id']!r}"
+            self._phases(bus.get("phases"), location)
+            self._positive(bus.get("nominal_kv_ll"), f"{location}.nominal_kv_ll")
+        if not bool(slack.get("is_slack", False)):
+            raise ValueError("base.slack_bus must refer to a bus with is_slack=true.")
+        if sum(bool(bus.get("is_slack", False)) for bus in self.buses) != 1:
+            raise ValueError("network.json must define exactly one slack bus.")
+
+        if self.source:
+            source_bus = self._bus(self.source.get("bus"), "source.bus")
+            source_phases = self._terminal_phases(self.source, source_bus, "source")
+            if source_bus["id"].lower() != slack["id"].lower():
+                raise ValueError("source.bus must match base.slack_bus.")
+            self._positive(self.source.get("base_kv_ll"), "source.base_kv_ll")
+            for rating in ("mvasc3", "mvasc1"):
+                if rating in self.source:
+                    self._positive(self.source[rating], f"source.{rating}")
+            self._validate_voltage({"kv_ll": self.source["base_kv_ll"], "connection": "delta"}, source_bus, source_phases, "source")
+
+        for name, code in self.line_codes.items():
+            location = f"line_codes.{name!r}"
+            raw_matrix = code.get("r_ohm_per_unit")
+            inferred_phases = tuple(range(1, len(raw_matrix) + 1)) if isinstance(raw_matrix, (list, tuple)) else ()
+            phases = self._phases(code.get("phases", inferred_phases), location)
+            self._matrix(code.get("r_ohm_per_unit"), len(phases), f"{location}.r_ohm_per_unit")
+            self._matrix(code.get("x_ohm_per_unit"), len(phases), f"{location}.x_ohm_per_unit", nonnegative=False)
+
+        for branch in self.branches:
+            location = f"branch {branch['id']!r}"
+            kind = str(branch.get("kind", "")).lower()
+            if kind not in {"line", "switch", "transformer", "regulator"}:
+                raise ValueError(f"{location}.kind must be line, switch, transformer, or regulator.")
+            from_key, to_key = ("from_bus", "to_bus") if "from_bus" in branch or "to_bus" in branch else ("from", "to")
+            bus_from = self._bus(branch.get(from_key), f"{location}.{from_key}")
+            bus_to = self._bus(branch.get(to_key), f"{location}.{to_key}")
+            phases = self._phases(branch.get("phases"), location)
+            from_phases = self._terminal_phases(branch, bus_from, f"{location}.from_terminal_nodes", "from_terminal_nodes")
+            to_phases = self._terminal_phases(branch, bus_to, f"{location}.to_terminal_nodes", "to_terminal_nodes")
+            if set(from_phases) != set(phases) or set(to_phases) != set(phases):
+                raise ValueError(f"{location} endpoint terminal nodes must match branch.phases.")
+            if kind in {"line", "switch"}:
+                if "normal_amps" in branch:
+                    self._positive(branch["normal_amps"], f"{location}.normal_amps")
+                if kind == "line":
+                    self._positive(branch.get("length", branch.get("length_km")), f"{location}.length")
+                    if "line_code" in branch:
+                        try:
+                            code = self.line_codes[str(branch["line_code"])]
+                        except KeyError as exc:
+                            raise ValueError(f"{location}.line_code references unknown code {branch['line_code']!r}.") from exc
+                        code_matrix = code.get("r_ohm_per_unit")
+                        inferred = tuple(range(1, len(code_matrix) + 1)) if isinstance(code_matrix, (list, tuple)) else ()
+                        if len(self._phases(code.get("phases", inferred), f"line_codes.{branch['line_code']!r}")) != len(phases):
+                            raise ValueError(f"{location}.phases and line_codes.{branch['line_code']!r}.phases have different dimensions.")
+                    elif "z_ohm_per_km" in branch:
+                        impedance = branch["z_ohm_per_km"]
+                        if not isinstance(impedance, (list, tuple)) or len(impedance) != len(phases):
+                            raise ValueError(f"{location}.z_ohm_per_km must match the branch phase dimension.")
+                        for row in impedance:
+                            if not isinstance(row, (list, tuple)) or len(row) != len(phases):
+                                raise ValueError(f"{location}.z_ohm_per_km must match the branch phase dimension.")
+                    else:
+                        raise ValueError(f"{location} must define line_code or z_ohm_per_km.")
+            else:
+                windings = branch.get("windings")
+                if not isinstance(windings, (list, tuple)) or len(windings) < 2:
+                    raise ValueError(f"{location}.windings must define at least two complete windings.")
+                winding_buses: list[str] = []
+                for index, winding in enumerate(windings, start=1):
+                    winding_location = f"{location}.windings[{index}]"
+                    winding_bus = self._bus(winding.get("bus"), f"{winding_location}.bus")
+                    winding_phases = self._terminal_phases(winding, winding_bus, winding_location)
+                    connection = str(winding.get("connection", "")).lower()
+                    if connection not in {"wye", "delta"}:
+                        raise ValueError(f"{winding_location}.connection must be wye or delta.")
+                    voltage_key = "kv_ll" if "kv_ll" in winding else "kv_ln" if "kv_ln" in winding else None
+                    if voltage_key is None:
+                        raise ValueError(f"{winding_location} must define kv_ll or kv_ln.")
+                    self._positive(winding[voltage_key], f"{winding_location}.{voltage_key}")
+                    self._positive(winding.get("kva"), f"{winding_location}.kva")
+                    self._validate_voltage({voltage_key: winding[voltage_key], "connection": connection}, winding_bus, winding_phases, winding_location)
+                    winding_buses.append(str(winding_bus["id"]).lower())
+                if winding_buses[:2] != [str(bus_from["id"]).lower(), str(bus_to["id"]).lower()]:
+                    raise ValueError(f"{location}.from/to must match the first two transformer windings.")
+                xhl_key = "xhl_pct" if "xhl_pct" in branch else "xhl_percent" if "xhl_percent" in branch else None
+                if xhl_key is not None:
+                    self._positive(branch[xhl_key], f"{location}.{xhl_key}")
+                if "tap" in branch:
+                    tap = branch["tap"]
+                    minimum = self._positive(tap.get("min_pu"), f"{location}.tap.min_pu")
+                    maximum = self._positive(tap.get("max_pu"), f"{location}.tap.max_pu")
+                    if minimum >= maximum:
+                        raise ValueError(f"{location}.tap.min_pu must be less than tap.max_pu.")
+                    if int(tap.get("num_taps", 0)) <= 0:
+                        raise ValueError(f"{location}.tap.num_taps must be a positive integer.")
+
+        for device in (*self.devices, *self.shunt_devices):
+            location = f"device {device['id']!r}"
+            kind = str(device.get("kind", "")).lower()
+            allowed = {"load", "pv", "wind", "bess", "ev", "capacitor"}
+            if kind not in allowed:
+                raise ValueError(f"{location}.kind must be one of {sorted(allowed)}.")
+            bus = self._bus(device.get("bus"), f"{location}.bus")
+            phases = self._terminal_phases(device, bus, location)
+            connection = str(device.get("connection", "wye")).lower()
+            if connection not in {"wye", "delta"}:
+                raise ValueError(f"{location}.connection must be wye or delta.")
+            self._validate_voltage(device, bus, phases, location)
+            for rating in ("p_rated_kw", "q_rated_kvar", "s_rated_kva", "energy_kwh"):
+                if rating in device:
+                    self._positive(device[rating], f"{location}.{rating}")
+            for injection in ("base_p_kw", "base_q_kvar", "q_kvar"):
+                if injection in device:
+                    self._positive(device[injection], f"{location}.{injection}", allow_zero=True)
+            if kind != "load" and "p_rated_kw" not in device and kind != "capacitor":
+                raise ValueError(f"{location} must define positive p_rated_kw.")
+            if kind == "bess":
+                initial_key = "initial_soc_pct" if "initial_soc_pct" in device else "initial_soc"
+                reserve_key = "reserve_soc_pct" if "reserve_soc_pct" in device else "reserve_soc"
+                for field_name in (initial_key, reserve_key):
+                    value = self._positive(device.get(field_name), f"{location}.{field_name}", allow_zero=True)
+                    if value > 100:
+                        raise ValueError(f"{location}.{field_name} must be in [0, 100].")
+                if float(device[initial_key]) < float(device[reserve_key]):
+                    raise ValueError(f"{location}.{initial_key} must be no less than {reserve_key}.")
+
+        for key in ("voltage_min_pu", "voltage_max_pu", "voltage_unbalance_limit_pct", "line_loading_limit_pct", "transformer_loading_limit_pct"):
+            if key in self.constraints:
+                self._positive(self.constraints[key], f"constraints.{key}")
+        if "voltage_min_pu" in self.constraints and "voltage_max_pu" in self.constraints and float(self.constraints["voltage_min_pu"]) >= float(self.constraints["voltage_max_pu"]):
+            raise ValueError("constraints.voltage_min_pu must be less than voltage_max_pu.")
 
     @classmethod
     def from_json(cls, path: str | Path) -> "NetworkModel":
@@ -248,14 +448,12 @@ class PFResult:
     summary: Mapping[str, float | bool]
     iterations: int
     next_state: PFState
-    final_der_commands: Mapping[str, DERCommand] = field(default_factory=dict)
+    final_der_commands: Mapping[str, DERCommand]
     control_iterations: int = 0
     pf_solve_count: int = 0
     pf_iterations_total: int = 0
     pf_iterations_last: int = 0
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    constraints: ConstraintResult = field(default_factory=ConstraintResult)
-    hosting_capacity: HostingCapacityMetrics = field(default_factory=HostingCapacityMetrics)
 
 
 @dataclass(frozen=True)
