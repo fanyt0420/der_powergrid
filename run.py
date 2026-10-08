@@ -15,12 +15,14 @@ from src.power_flow import NetworkModel
 from src.profile_store import ProfileStore
 from src.qsts import run_qsts
 from src.solvers.opendss_solver import OpenDSSSolver
+from src.solvers.fem_solver import FiniteElementPFSolver
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a generated OpenDSS QSTS case")
     parser.add_argument("--data-dir", type=Path, required=True, help="Case directory containing network.json and network.dss.")
     parser.add_argument("--output", type=Path, help="Result directory; defaults to output/<case-directory-name>.")
+    parser.add_argument("--solver", choices=("opendss", "fem"), default="opendss", help="Power-flow solver; FEM currently supports line-only wye cases.")
     return parser.parse_args()
 
 
@@ -35,7 +37,7 @@ def main() -> None:
     output_dir = args.output.resolve() if args.output else ROOT / "output" / data_dir.name
     output_dir.mkdir(parents=True, exist_ok=True)
     network = NetworkModel.from_json(data_dir / "network.json")
-    solver = OpenDSSSolver(data_dir / "network.dss")
+    solver = OpenDSSSolver(data_dir / "network.dss") if args.solver == "opendss" else FiniteElementPFSolver()
     solver.build(network)
     profiles = ProfileStore.from_case(network, data_dir)
 

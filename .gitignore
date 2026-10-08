@@ -15,3 +15,8 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated FEM comparison cases and results
+work/fem_radial_case/
+output/fem_radial_experiment/
+output/fem_cli_check/

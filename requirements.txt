@@ -2,3 +2,4 @@ dss-python>=0.15,<1.0
 numpy>=1.24,<3.0
 pandas>=2.0,<3.0
 matplotlib>=3.7,<4.0
+scipy>=1.10,<2.0

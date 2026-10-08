@@ -32,6 +32,7 @@ src/
 ├── rms_model.py                   # RMS 工作点、设备模型和时间推进
 └── solvers/
     ├── custom_pf_solver.py         # 自研三相潮流求解器的接口骨架
+    ├── fem_solver.py               # 受限线路模型的 P1 图有限元原型
     └── opendss_solver.py          # OpenDSS 潮流求解器实现
 
 run.py                             # QSTS 运行入口
@@ -64,6 +65,15 @@ python run.py --data-dir data/ieee13_unbalanced_der
 ```
 
 结果位于 `output/ieee13_unbalanced_der/`。该算例用于验证三相不平衡网络、单相/三相 DER 以及多设备 Volt-VAR 控制下的 QSTS 流程。
+
+### 有限元原型与 OpenDSS 对照
+
+```bash
+python experiments/fem_radial_experiment.py --segments 60 --hours 24
+python run.py --data-dir work/fem_radial_case --solver fem
+```
+
+对照结果在 `output/fem_radial_experiment/`。此原型只支持固定三相电源、串联线路、星形 PQ 负荷及 PV/风电/EV，支持三相线路互阻抗与单相接入；不支持完整 IEEE 13 节点算例中的变压器、调压器、开关、并联电容、线路充电电容等元件。数学推导、文献与本机验证见 [PDE/FEM 调研稿](docs/PDE_FEM_调研与本机实验.md)。
 
 ## 数据接口
 
