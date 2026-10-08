@@ -24,6 +24,7 @@ from src.power_flow import DERCommand, NetworkModel, OperatingPoint, PFResult, P
 
 
 _PHASE_ANGLE = {1: 0.0, 2: -2.0 * np.pi / 3.0, 3: 2.0 * np.pi / 3.0}
+_KM_PER_LENGTH_UNIT = {"km": 1.0, "mi": 1.609344, "ft": 0.0003048, "m": 0.001, "kft": 0.3048}
 
 
 class FiniteElementPFSolver:
@@ -77,12 +78,16 @@ class FiniteElementPFSolver:
                 if "c_nf_per_unit" in code and np.any(np.asarray(code["c_nf_per_unit"], dtype=float) != 0):
                     raise NotImplementedError("FEM prototype does not model line charging capacitance.")
                 unit = str(code.get("unit", "km")).lower()
-                if unit not in {"km", "mi"}:
+                length_unit = str(branch.get("length_unit", "km" if "length" not in branch else unit)).lower()
+                if unit not in _KM_PER_LENGTH_UNIT or length_unit not in _KM_PER_LENGTH_UNIT:
                     raise NotImplementedError(f"Unsupported line-code unit: {unit}")
                 z_per_unit = np.asarray(code["r_ohm_per_unit"], dtype=float) + 1j * np.asarray(code["x_ohm_per_unit"], dtype=float)
-                z = z_per_unit * length
+                z = z_per_unit * length * _KM_PER_LENGTH_UNIT[length_unit] / _KM_PER_LENGTH_UNIT[unit]
             else:
-                z = (np.asarray([[complex(*entry) for entry in row] for row in branch["z_ohm_per_km"]]) * length)
+                length_unit = str(branch.get("length_unit", "km")).lower()
+                if length_unit not in _KM_PER_LENGTH_UNIT:
+                    raise NotImplementedError(f"Unsupported line length unit: {length_unit}")
+                z = np.asarray([[complex(*entry) for entry in row] for row in branch["z_ohm_per_km"]]) * length * _KM_PER_LENGTH_UNIT[length_unit]
             if z.shape != (len(phases), len(phases)):
                 raise ValueError(f"Impedance dimensions do not match {branch['id']}.")
             try:

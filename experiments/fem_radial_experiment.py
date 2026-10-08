@@ -61,7 +61,7 @@ def generate_case(folder: Path, n_segments: int, hours: int) -> None:
         for phase in (1, 2, 3):
             name = f"Load_{i}_{phase}"
             devices.append({"id": name, "kind": "load", "bus": f"b{i}", "phases": [phase], "connection": "wye", "kv": 12.47 / np.sqrt(3)})
-            dss_lines.append(f"New Load.{name} phases=1 bus1=b{i}.{phase} conn=wye model=1 kV={12.47/np.sqrt(3):.12g} kW=0 kvar=0")
+            dss_lines.append(f"New Load.{name} phases=1 bus1=b{i}.{phase} conn=wye model=1 kV={12.47/np.sqrt(3):.12g} kW=0 kvar=0 Vminpu=0 Vmaxpu=2")
             for hour in range(hours):
                 time = start + timedelta(hours=hour)
                 shape = 0.75 + 0.15 * np.sin(2.0 * np.pi * (hour - 6) / 24.0)
@@ -73,7 +73,7 @@ def generate_case(folder: Path, n_segments: int, hours: int) -> None:
         name = f"PV_{i}"
         path = f"der_profiles/{name.lower()}.csv"
         devices.append({"id": name, "kind": "pv", "bus": f"b{i}", "phases": [phase], "connection": "wye", "kv": 12.47 / np.sqrt(3), "p_rated_kw": 5.0, "profile_file": path})
-        dss_lines.append(f"New Generator.{name} phases=1 bus1=b{i}.{phase} conn=wye model=1 kV={12.47/np.sqrt(3):.12g} kW=0 kvar=0")
+        dss_lines.append(f"New Generator.{name} phases=1 bus1=b{i}.{phase} conn=wye model=1 kV={12.47/np.sqrt(3):.12g} kW=0 kvar=0 Vminpu=0 Vmaxpu=2")
         pd.DataFrame([{
             "timestamp": (start + timedelta(hours=hour)).isoformat(sep=" "),
             "pv_kw": round(max(0.0, 4.2 * np.sin(np.pi * (hour - 6) / 12.0)), 7),
@@ -85,7 +85,7 @@ def generate_case(folder: Path, n_segments: int, hours: int) -> None:
         name = f"EV_{i}"
         path = f"der_profiles/{name.lower()}.csv"
         devices.append({"id": name, "kind": "ev", "bus": f"b{i}", "phases": [phase], "connection": "wye", "kv": 12.47 / np.sqrt(3), "p_rated_kw": 3.0, "profile_file": path})
-        dss_lines.append(f"New Load.{name} phases=1 bus1=b{i}.{phase} conn=wye model=1 kV={12.47/np.sqrt(3):.12g} kW=0 kvar=0")
+        dss_lines.append(f"New Load.{name} phases=1 bus1=b{i}.{phase} conn=wye model=1 kV={12.47/np.sqrt(3):.12g} kW=0 kvar=0 Vminpu=0 Vmaxpu=2")
         pd.DataFrame([{
             "timestamp": (start + timedelta(hours=hour)).isoformat(sep=" "),
             "ev_kw": 2.0 if hour >= 17 or hour < 6 else 0.6,

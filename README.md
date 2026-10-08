@@ -75,6 +75,15 @@ python run.py --data-dir work/fem_radial_case --solver fem
 
 对照结果在 `output/fem_radial_experiment/`。此原型只支持固定三相电源、串联线路、星形 PQ 负荷及 PV/风电/EV，支持三相线路互阻抗与单相接入；不支持完整 IEEE 13 节点算例中的变压器、调压器、开关、并联电容、线路充电电容等元件。数学推导、文献与本机验证见 [PDE/FEM 调研稿](docs/PDE_FEM_调研与本机实验.md)。
 
+科研评估请优先运行基于 IEEE 13 公开线路数据的**明确删改子网**，再运行独立标注为合成数据的规模压力实验：
+
+```bash
+python experiments/ieee13_derived_benchmark.py --repeats 15
+python experiments/fem_scaling_study.py --sizes 30 60 120 240 --repeats 7 --hours 24
+```
+
+前者保留选定 IEEE 线路的阻抗矩阵、相别和长度，但删去了本求解器不支持的设备，**不是完整 IEEE 13 标准算例**；DER 时序仍来自项目生成的数据。实验记录了全相节点误差、电流、损耗、控制收敛和重复计时。报告给出具体删改和方法优劣，不能将计时差解释成有限元本身的普遍加速。
+
 ## 数据接口
 
 每个算例目录都是独立输入。程序不假定节点数量、DER 数量或网络名称。

@@ -20,3 +20,7 @@ Thumbs.db
 work/fem_radial_case/
 output/fem_radial_experiment/
 output/fem_cli_check/
+work/ieee13_derived_fem/
+output/ieee13_derived_fem/
+work/fem_scaling_*/
+output/fem_scaling_study/
