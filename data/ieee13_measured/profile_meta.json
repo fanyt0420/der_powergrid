@@ -1,0 +1,110 @@
+{
+  "case": "ieee13_measured",
+  "timeline": {
+    "start": "2022-09-20 00:00:00",
+    "end": "2022-09-20 23:45:00",
+    "step_seconds": 900,
+    "points_per_day": 96
+  },
+  "day_quality_gate": {
+    "span_h": 10.25,
+    "peak_pu": 0.701876194,
+    "max_step_pu": 0.156736132,
+    "passed": true,
+    "rejected_days": 161,
+    "source": "most variable day passing the quality gate"
+  },
+  "sources": {
+    "pv": {
+      "dataset": "DDRE-33 node_33 PV",
+      "file": "data/raw/ddre33/solar33_real_1.csv",
+      "sha256": "0393ec6c29f7d55073fc1e93879fdbf086021ea73d88d6f791e0b842fb5c07ed",
+      "doi": "10.1038/s41597-025-06464-w"
+    },
+    "wind": {
+      "dataset": "DDRE-33 node_22 wind",
+      "file": "data/raw/ddre33/wind22_real_1.csv",
+      "sha256": "4e4c156b57cdd65b8082f998995b477983d20de8192fe592211999dac6eb655b",
+      "doi": "10.1038/s41597-025-06464-w"
+    },
+    "load": {
+      "dataset": "Ausgrid solar home electricity, customer 12 (30 min), 6-day aggregate",
+      "file": "data/raw/ausgrid/customer12_daily_pivot_cons_2011-2012.csv",
+      "sha256": "ec374dc061219a408ad23eb4a724d77e4f6f8f94912c1f55a12644477a9b2bb8",
+      "url": "https://github.com/pierre-haessig/solarhome-control-bench",
+      "doi": "10.1080/14786451.2015.1100196",
+      "months_used": [
+        "2012-03",
+        "2012-04",
+        "2012-05"
+      ],
+      "aggregate_households": 6,
+      "dates_used": [
+        "2012-03-01..2012-03-06 (6 days)",
+        "2012-03-07..2012-03-12 (6 days)",
+        "2012-03-13..2012-03-18 (6 days)",
+        "2012-03-19..2012-03-24 (6 days)",
+        "2012-03-25..2012-03-30 (6 days)",
+        "2012-03-31..2012-04-05 (6 days)",
+        "2012-04-06..2012-04-11 (6 days)",
+        "2012-04-12..2012-04-17 (6 days)",
+        "2012-04-18..2012-04-23 (6 days)",
+        "2012-04-24..2012-04-29 (6 days)",
+        "2012-04-30..2012-05-05 (6 days)",
+        "2012-05-06..2012-05-11 (6 days)",
+        "2012-05-12..2012-05-17 (6 days)",
+        "2012-05-18..2012-05-23 (6 days)",
+        "2012-05-24..2012-05-29 (6 days)"
+      ]
+    },
+    "ev": {
+      "dataset": "Residential EV charging, 12 sites in Norway (35k sessions)",
+      "file": "data/raw/ev_norway/Dataset1_charging_reports.csv",
+      "sha256": "48c15189e2c1acca7a34d4e3789b1d615ddd091849a9803ae39aee8aec474ed2",
+      "url": "https://zenodo.org/records/13896176",
+      "doi": "10.1016/j.dib.2024.110883",
+      "sessions": {
+        "EV_671_C": {
+          "plugin_local": "2019-11-19 17:40:00",
+          "energy_kwh": 14.74,
+          "connection_h": 13.6,
+          "user_id": "TRO_Plass45",
+          "site": "TRO"
+        },
+        "EV_675_B": {
+          "plugin_local": "2019-04-21 21:48:00",
+          "energy_kwh": 7.4,
+          "connection_h": 15.13,
+          "user_id": "ASK_Plass25",
+          "site": "ASK"
+        },
+        "EV_611_C": {
+          "plugin_local": "2019-12-30 17:06:56",
+          "energy_kwh": 25.96,
+          "connection_h": 3.75,
+          "user_id": "TRO_R_MS22-1",
+          "site": "TRO_R"
+        }
+      }
+    },
+    "bess": {
+      "dataset": "rule-based dispatch on the measured PV trace",
+      "file": null,
+      "doi": null
+    }
+  },
+  "derivation": {
+    "pv_kw": "pu trace x p_rated_kw",
+    "wind_kw": "pu trace x p_rated_kw",
+    "load_kw": "Ausgrid 30-min curve resampled to the case grid, rescaled so daily mean power equals the IEEE-13 load's daily mean (energy preserving); Q uses that load's own Q/P ratio",
+    "ev_kw": "constant power from the measured plug-in time until the measured session energy is delivered, capped at p_rated_kw",
+    "q_limit_kvar": "sqrt(S^2 - P^2), S = 1.05 x p_rated_kw"
+  },
+  "limitations": [
+    "Sources are not co-located and not observed on the same day: this is a representative day assembled from independent measurements.",
+    "Ausgrid contributes a single customer, so the 15 feeder loads reuse it on 15 different dates.",
+    "Ausgrid dates come from 2012-03 (southern autumn) to match the northern-autumn DDRE-33 day.",
+    "BESS dispatch is still a rule-based schedule, not a measured trace.",
+    "EV charging is constant power; real sessions taper near full SOC (CC-CV), which is not modelled."
+  ]
+}
