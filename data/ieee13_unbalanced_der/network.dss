@@ -1,4 +1,4 @@
-Redirect "D:\PythonProject\PythonFiles\pythonProject\opendss_qsts_der\data\ieee13_unbalanced_der\ieee13_base\IEEE13Nodeckt.dss"
+Redirect "ieee13_base/IEEE13Nodeckt.dss"
 New Generator.PV_632_A phases=1 bus1=632.1 conn=wye kV=2.4 kW=0 kvar=0
 New Generator.PV_670_C phases=1 bus1=670.3 conn=wye kV=2.4 kW=0 kvar=0
 New Generator.PV_671_A phases=1 bus1=671.1 conn=wye kV=2.4 kW=0 kvar=0

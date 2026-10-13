@@ -447,7 +447,7 @@ RMS 输出保存在 `output/<case>/rms/<scenario>/`；可通过 `run_rms.py --ou
 
 ## 自研求解器接入
 
-自研求解器可放在 `src/solvers/`，实现 `PowerFlowSolver` 的 `build()` 与 `solve()`。`custom_pf_solver.py` 给出了该协议的骨架；它尚不包含求解算法。至少应返回：
+自研求解器可放在 `src/solvers/`，实现 `PowerFlowSolver` 的 `build()` 与 `solve()`。`custom_pf_solver.py` 给出了该协议的骨架；`fem_solver.py` 是已经接入此协议的线单元 P1 有限元原型。至少应返回：
 
 ```python
 PFResult(
@@ -470,6 +470,12 @@ PFResult(
 若采用潮流—控制器联立牛顿法，未知量可包括母线复电压和受控 DER 的 Q（或 d/q 电流、内部控制状态）；残差由网络功率平衡、Volt-VAR 方程、下垂方程、限值互补条件等组成。联立解应写入 `PFResult.final_der_commands`，使 BESS SOC 和 RMS 初始化使用实际的最终 P/Q，而不是 profile 的原始计划值。
 
 求解器需要自行处理以下后端相关内容：三相/单相端子连接、相序与标幺基值、负荷和 DER 的功率符号、变压器与调压器模型、收敛判据，以及 `PFState.backend_state` 中的 warm start 或内部变量。QSTS 不依赖 OpenDSS API；唯一要求是遵守 `PowerFlowSolver` 与 `PFResult` 合约。
+
+### 有限元后端与 IEEE 13 验证
+
+`run.py --data-dir <算例目录> --solver fem` 选择 `FiniteElementPFSolver`，结果默认写入 `output/<算例名>_fem/`，另外输出最后一个时间步的 `fem_path_profile_last_step.csv`。求解器把径向网络划成不重叠的源端/交点到交点/末端路径；交点共享电压未知量，全局节点方程保证电流守恒。当前这个 QSTS 后端只接受理想电源、无并联器件的线路网络和 wye 负荷/PV/风机/EV；对变压器、调压器、delta、储能和线路电容会明确报错。因此仓库自带的 `ieee13_measured` 与 `ieee13_unbalanced_der` 暂时不能直接用 `--solver fem` 运行。
+
+完整 IEEE 13 节点的固定抽头**单时刻**验证可运行 `python run_ieee13_fem.py`。独立的 `DssGraphFEMSolver` 从标准 DSS 文件读取缺相线路、变压器、调压器和电容器的线性导纳，以 650 节点电压为边界，自行迭代求解负荷电流与下游电压。它仍依赖 OpenDSS 解析复杂元件和生成参考结果，尚未连接到 DER 时序 QSTS。输入、误差和适用范围见 `docs/IEEE13图网络有限元验证.md`。
 
 ## 组织新算例与设备模型
 

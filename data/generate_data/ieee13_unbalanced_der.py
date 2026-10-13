@@ -119,7 +119,7 @@ def main() -> None:
     network = _network(ders)
     (CASE / "network.json").write_text(json.dumps(network, indent=2), encoding="utf-8")
 
-    dss = [f'Redirect "{master.resolve()}"']
+    dss = ['Redirect "ieee13_base/IEEE13Nodeckt.dss"']
     for device in ders:
         phases, count, kv = ".".join(map(str, device["terminal_nodes"])), len(device["terminal_nodes"]), device["kv"]
         if device["kind"] in {"pv", "wind"}:
