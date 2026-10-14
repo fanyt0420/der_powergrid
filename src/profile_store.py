@@ -38,6 +38,7 @@ class ProfileStore:
     q_limit_kvar: np.ndarray
     v_ref_pu: np.ndarray
     droop_kvar_per_pu: np.ndarray
+    deadband_pu: np.ndarray
     bess_mask: np.ndarray
     bess_capacity_kwh: np.ndarray
     bess_p_rated_kw: np.ndarray
@@ -62,6 +63,7 @@ class ProfileStore:
         q_limit = np.zeros((t_count, der_count))
         v_ref = np.ones((t_count, der_count))
         droop = np.zeros((t_count, der_count))
+        deadband = np.zeros((t_count, der_count))
         kinds = np.empty(der_count, dtype=object)
         buses: list[str] = []
         phases: list[tuple[int, ...]] = []
@@ -82,7 +84,7 @@ class ProfileStore:
             phases.append(tuple(int(node) for node in device.get("phases", ())))
             profile_path = data_dir / str(device["profile_file"])
             values = cls._der_arrays(profile_path, timestamps, kind, str(device["id"]))
-            der_p[:, column], der_q[:, column], controller[:, column], q_limit[:, column], v_ref[:, column], droop[:, column] = values
+            der_p[:, column], der_q[:, column], controller[:, column], q_limit[:, column], v_ref[:, column], droop[:, column], deadband[:, column] = values
             if kind == "bess":
                 capacity[column] = float(device["energy_kwh"])
                 p_rated[column] = float(device.get("p_rated_kw", 0.0))
@@ -93,7 +95,7 @@ class ProfileStore:
 
         return cls(
             timestamps, load_ids, der_ids, kinds, tuple(buses), tuple(phases), load_p, load_q,
-            der_p, der_q, controller, q_limit, v_ref, droop, kinds == "bess", capacity,
+            der_p, der_q, controller, q_limit, v_ref, droop, deadband, kinds == "bess", capacity,
             p_rated, reserve, charge_eff, discharge_eff, soc,
         )
 
@@ -148,13 +150,15 @@ class ProfileStore:
             raise ValueError(f"DER {device_id!r} profile has unsupported controller types: {sorted(unsupported)}")
         p = np.empty(len(timestamps)); q = np.empty(len(timestamps)); types = np.empty(len(timestamps), dtype=object)
         limit = np.zeros(len(timestamps)); ref = np.ones(len(timestamps)); droop = np.zeros(len(timestamps))
+        deadband = np.zeros(len(timestamps))
         p[rows] = frame[p_column].to_numpy(float)
         q[rows] = frame[q_column].to_numpy(float) if q_column in frame else 0.0
         types[rows] = controller
         limit[rows] = frame.get("q_limit_kvar", 0.0)
         ref[rows] = frame.get("v_ref_pu", 1.0)
         droop[rows] = frame.get("droop_kvar_per_pu", 0.0)
-        return p, q, types, limit, ref, droop
+        deadband[rows] = frame.get("deadband_pu", 0.0)
+        return p, q, types, limit, ref, droop, deadband
 
     def commands_at(self, time_index: int, dt_hours: float) -> dict[str, DERCommand]:
         p = self.der_p_kw[time_index].copy()
@@ -174,6 +178,7 @@ class ProfileStore:
                     "q_limit_kvar": float(self.q_limit_kvar[time_index, column]),
                     "v_ref_pu": float(self.v_ref_pu[time_index, column]),
                     "droop_kvar_per_pu": float(self.droop_kvar_per_pu[time_index, column]),
+                    "deadband_pu": float(self.deadband_pu[time_index, column]),
                     "terminal_nodes": self.der_phases[column],
                     **({"soc_pct": float(self.soc_pct[column])} if self.bess_mask[column] else {}),
                 },

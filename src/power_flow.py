@@ -463,9 +463,18 @@ class SolverContext:
     time_step_hours: float = 1.0
     control_iteration: int = 0
     previous_result: PFResult | None = None
-    max_control_iterations: int = 20
+     # ``relaxation`` damps the volt-VAR fixed-point iteration. At 1.0 the DER jumps
+    # straight to its commanded Q each pass, which diverges once penetration is high
+    # (measured: no droop above rating*2 converges at 110% penetration). 0.5 makes the
+    # full IEEE 1547 curve -- droop ~13*rating with a 0.02 pu deadband -- converge to
+    # ~80% penetration; 0.3 to ~110%; 0.2 reaches the reverse-flow regime (~130-180%,
+    # scale 18-22) where PV output briefly exceeds load at midday. 0.1 UNDER-damps and
+    # diverges, so 0.2 is the practical floor. Lower values never change the fixed point,
+    # so existing cases keep their voltages -- they just take more control iterations
+    # (high-penetration days need ~70-95, hence max_control_iterations = 120).
+    max_control_iterations: int = 120
     control_tolerance: float = 1e-6
-    relaxation: float = 1.0
+    relaxation: float = 0.2
     extra_equations: Mapping[str, Any] = field(default_factory=dict)
     options: Mapping[str, Any] = field(default_factory=dict)
 
