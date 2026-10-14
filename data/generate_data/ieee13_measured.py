@@ -278,8 +278,7 @@ def _fetch_ieee13_base(case: Path) -> None:
 
 def _write_dss(case: Path, ders: list[dict]) -> None:
     _fetch_ieee13_base(case)
-    master = (case / "ieee13_base" / "IEEE13Nodeckt.dss").resolve().as_posix()
-    dss = [f'Redirect "{master}"']
+    dss = ['Redirect "ieee13_base/IEEE13Nodeckt.dss"']
     for device in ders:
         phases, count, kv = ".".join(map(str, device["terminal_nodes"])), len(device["terminal_nodes"]), device["kv"]
         if device["kind"] in {"pv", "wind"}:

@@ -15,27 +15,31 @@ from src.power_flow import NetworkModel
 from src.profile_store import ProfileStore
 from src.qsts import run_qsts
 from src.solvers.opendss_solver import OpenDSSSolver
+from src.solvers.fem_solver import FiniteElementPFSolver
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a generated OpenDSS QSTS case")
-    parser.add_argument("--data-dir", type=Path, required=True, help="Case directory containing network.json and network.dss.")
+    parser = argparse.ArgumentParser(description="Run a generated QSTS case")
+    parser.add_argument("--data-dir", type=Path, required=True, help="Case directory containing network.json and profiles; OpenDSS also needs network.dss.")
     parser.add_argument("--output", type=Path, help="Result directory; defaults to output/<case-directory-name>.")
+    parser.add_argument("--solver", choices=("opendss", "fem"), default="opendss", help="Power-flow backend.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     data_dir = args.data_dir.resolve()
-    required_files = [data_dir / "network.json", data_dir / "network.dss", data_dir / "load_profiles.csv"]
+    required_files = [data_dir / "network.json", data_dir / "load_profiles.csv"]
+    if args.solver == "opendss":
+        required_files.append(data_dir / "network.dss")
     missing = [str(path) for path in required_files if not path.exists()]
     if missing:
         raise FileNotFoundError("Case input data is missing:\n" + "\n".join(missing))
 
-    output_dir = args.output.resolve() if args.output else ROOT / "output" / data_dir.name
+    output_dir = args.output.resolve() if args.output else ROOT / "output" / (data_dir.name if args.solver == "opendss" else f"{data_dir.name}_fem")
     output_dir.mkdir(parents=True, exist_ok=True)
     network = NetworkModel.from_json(data_dir / "network.json")
-    solver = OpenDSSSolver(data_dir / "network.dss")
+    solver = OpenDSSSolver(data_dir / "network.dss") if args.solver == "opendss" else FiniteElementPFSolver()
     solver.build(network)
     profiles = ProfileStore.from_case(network, data_dir)
 
@@ -43,6 +47,8 @@ def main() -> None:
     qsts_bus.to_csv(output_dir / "qsts_bus_voltages.csv", index=False)
     qsts_system.to_csv(output_dir / "qsts_system.csv", index=False)
     qsts_branches.to_csv(output_dir / "qsts_branch_results.csv", index=False)
+    if isinstance(solver, FiniteElementPFSolver):
+        pd.DataFrame(solver.path_profile_records()).to_csv(output_dir / "fem_path_profile_last_step.csv", index=False)
     constraint_columns = [
         "timestamp", "voltage_low_count", "voltage_high_count", "voltage_unbalance_count",
         "line_thermal_violation_count", "transformer_thermal_violation_count",
