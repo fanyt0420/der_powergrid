@@ -347,15 +347,23 @@ class DERCommand:
         """Return the reactive-power command consistent with ``voltage_pu``.
 
         For ``constant_pq`` and ``soc_schedule`` the command is fixed. For
-        ``volt_var`` it evaluates ``Q = clip[k*(Vref - V), -Qmax, Qmax]`` where the
-        limit, reference and droop come from ``parameters``.
+        ``volt_var`` applies the optional symmetric ``deadband_pu`` around ``Vref``
+        and then evaluates ``Q = clip[k*error, -Qmax, Qmax]``.  The deadband
+        defaults to zero, preserving the original ``Q = clip[k*(Vref - V),
+        -Qmax, Qmax]`` behaviour.
         """
         if self.controller_type != "volt_var":
             return self.q_kvar
         v_ref = float(self.parameters.get("v_ref_pu", 1.0))
         droop = float(self.parameters.get("droop_kvar_per_pu", 0.0))
         q_limit = float(self.parameters.get("q_limit_kvar", 0.0))
-        q = droop * (v_ref - voltage_pu)
+        deadband = float(self.parameters.get("deadband_pu", 0.0))
+        error = v_ref - voltage_pu
+        if abs(error) <= deadband:
+            error = 0.0
+        else:
+            error -= deadband if error > 0.0 else -deadband
+        q = droop * error
         return max(-q_limit, min(q_limit, q))
 
 

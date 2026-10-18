@@ -124,16 +124,11 @@ class OpenDSSSolver:
                     raise ValueError(f"Volt-VAR DER {name!r} found no bus voltage for bus {device['bus']!r} at timestamp {operating_point.time}.")
                 voltage_pu[index] = np.mean(values)
             prior_q = np.fromiter((commands[name].q_kvar for name in active_names), dtype=float)
-            v_ref = np.fromiter((float(commands[name].parameters.get("v_ref_pu", 1.0)) for name in active_names), dtype=float)
-            droop = np.fromiter((float(commands[name].parameters.get("droop_kvar_per_pu", 0.0)) for name in active_names), dtype=float)
-            limit = np.fromiter((float(commands[name].parameters.get("q_limit_kvar", 0.0)) for name in active_names), dtype=float)
-            deadband = np.fromiter((float(commands[name].parameters.get("deadband_pu", 0.0)) for name in active_names), dtype=float)
-            error = v_ref - voltage_pu
-            # Volt-VAR deadband (IEEE 1547 style): no response while |v - v_ref| <= deadband.
-            # deadband defaults to 0.0, which reproduces the previous behaviour exactly, so
-            # cases that do not set it are unaffected.
-            error = np.where(np.abs(error) <= deadband, 0.0, error - np.sign(error) * deadband)
-            updated_q = prior_q + relaxation * (np.clip(droop * error, -limit, limit) - prior_q)
+            target_q = np.fromiter(
+                (commands[name].adjusted_q(voltage) for name, voltage in zip(active_names, voltage_pu, strict=True)),
+                dtype=float,
+            )
+            updated_q = prior_q + relaxation * (target_q - prior_q)
             changed = bool(np.any(np.abs(updated_q - prior_q) > tolerance))
             if not changed:
                 break

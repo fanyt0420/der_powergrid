@@ -14,6 +14,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FEMPhysicsTest(unittest.TestCase):
+    def test_volt_var_deadband_and_limit(self):
+        command = DERCommand(
+            0,
+            0,
+            "volt_var",
+            {"v_ref_pu": 1.0, "droop_kvar_per_pu": 100.0, "q_limit_kvar": 20.0, "deadband_pu": 0.02},
+        )
+        self.assertEqual(command.adjusted_q(1.01), 0.0)
+        self.assertAlmostEqual(command.adjusted_q(0.97), 1.0)
+        self.assertAlmostEqual(command.adjusted_q(1.03), -1.0)
+        self.assertEqual(command.adjusted_q(0.50), 20.0)
+
     def test_delta_current_conservation(self):
         for phases in ([1, 2, 3], [2, 3]):
             matrix = connection_map(phases, "delta")
