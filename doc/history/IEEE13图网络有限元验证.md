@@ -1,5 +1,7 @@
 # IEEE 13 节点图网络有限元验证
 
+> 历史记录：对应旧的 DSS 导入、固定抽头单时刻原型。文中脚本已由统一的原生后端替代，请按 [当前算法与用法](../fem_solver.md) 运行，最新结果见 [验证报告](../fem_validation.md)。以下保留原实验记录，不能代表当前完整 QSTS 后端的精度。
+
 ## 算例和运行
 
 使用 IEEE 13 节点 OpenDSS 测试数据的 `IEEE13Nodeckt.dss`、`IEEELineCodes.dss` 和母线坐标文件，原文件来自 [DSS-Extensions 的 OpenDSSDirect.py 测试仓库](https://github.com/dss-extensions/OpenDSSDirect.py/tree/master/tests/data/13Bus)。运行 `python run_ieee13_fem.py`，输出目录为 `output/ieee13_fem/`。

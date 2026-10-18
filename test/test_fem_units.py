@@ -30,7 +30,10 @@ class FEMLineUnitsTest(unittest.TestCase):
         )
         solver = FiniteElementPFSolver()
         solver.build(network)
-        np.testing.assert_allclose(solver.elements[0][3], np.eye(3) * (1 + 2j))
+        # Check terminal I=YV, not the solver's internal impedance representation.
+        current = solver.elements[0].y @ np.array([1, 2, 3, 0, 0, 0], complex)
+        expected = np.array([1, 2, 3], complex) / (1 + 2j)
+        np.testing.assert_allclose(current, np.r_[expected, -expected])
 
 
 if __name__ == "__main__":

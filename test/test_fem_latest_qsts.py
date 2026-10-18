@@ -1,4 +1,4 @@
-"""End-to-end contract check against the current ProfileStore/QSTS interface."""
+"""Small-network regression for the ProfileStore/QSTS interface."""
 
 from pathlib import Path
 from tempfile import TemporaryDirectory

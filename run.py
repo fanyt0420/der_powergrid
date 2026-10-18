@@ -14,7 +14,6 @@ sys.path.insert(0, str(ROOT))
 from src.power_flow import NetworkModel
 from src.profile_store import ProfileStore
 from src.qsts import run_qsts
-from src.solvers.opendss_solver import OpenDSSSolver
 from src.solvers.fem_solver import FiniteElementPFSolver
 
 
@@ -39,7 +38,11 @@ def main() -> None:
     output_dir = args.output.resolve() if args.output else ROOT / "output" / (data_dir.name if args.solver == "opendss" else f"{data_dir.name}_fem")
     output_dir.mkdir(parents=True, exist_ok=True)
     network = NetworkModel.from_json(data_dir / "network.json")
-    solver = OpenDSSSolver(data_dir / "network.dss") if args.solver == "opendss" else FiniteElementPFSolver()
+    if args.solver == "opendss":
+        from src.solvers.opendss_solver import OpenDSSSolver
+        solver = OpenDSSSolver(data_dir / "network.dss")
+    else:
+        solver = FiniteElementPFSolver()
     solver.build(network)
     profiles = ProfileStore.from_case(network, data_dir)
 
