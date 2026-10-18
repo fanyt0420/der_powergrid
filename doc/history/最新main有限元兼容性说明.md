@@ -1,5 +1,7 @@
 # 最新 main 与有限元求解器兼容性说明
 
+> 历史记录：本页记录 2026-10-13 的接口移植。2026-10-17 已扩展为两个完整 DER 算例可运行的原生后端，当前算法与使用方式见 [fem_solver.md](../fem_solver.md)。
+
 本次以 `origin/main` 的 2026-10-13 版本为基线移植原有限元代码，保留了当前主线的 `NetworkModel`、`ProfileStore`、QSTS 和 OpenDSS 实现。
 
 原来基于早期 `main` 的 `CustomPFSolver` 不能直接覆盖最新接口：最新 `OperatingPoint` 使用时间戳而不是小时编号；`PFResult` 必须返回最终 DER 命令、控制迭代与潮流求解次数；QSTS 需要节点、系统和支路三组结果。直接替换旧 `run.py` 还会绕开 `ProfileStore`。因此移植的线单元求解器单独放在 `src/solvers/fem_solver.py`，并以 `--solver fem` 接入最新 `run.py`，保留默认 OpenDSS 路径。

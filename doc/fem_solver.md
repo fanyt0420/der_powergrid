@@ -1,0 +1,171 @@
+# 有限元/图网络潮流求解器：算法与使用方法
+
+本文对应 2026-10-17 的原生 `FiniteElementPFSolver`。当前版本可以直接通过 `run.py` 完成仓库中 `ieee13_unbalanced_der` 的 24 步、`ieee13_measured` 的 96 步完整 QSTS，包含负荷、光伏、风电、储能、EV、电容器、变压器和自动调压器。
+
+FEM 运行只读取 JSON 和时序 CSV，不解析 DSS，不读取 OpenDSS 导纳或参考电压，也不调用其潮流和控制算法。OpenDSS 只在选用原后端或运行对照测试时使用。旧 `run_ieee13_fem.py` 及其 DSS 导入求解器已由统一实现替代。
+
+## 1. 安装和运行
+
+在本版本仓库根目录执行（Python 3.10 或更新版本）：
+
+```powershell
+python -m pip install -r requirements.txt
+python run.py --data-dir data/ieee13_unbalanced_der --solver fem
+python run.py --data-dir data/ieee13_measured --solver fem
+```
+
+默认结果分别在 `output/ieee13_unbalanced_der_fem/`、`output/ieee13_measured_fem/`。可以用 `--output <目录>` 指定位置。
+
+同样的输入改用 OpenDSS：
+
+```powershell
+python run.py --data-dir data/ieee13_unbalanced_der --solver opendss
+python run.py --data-dir data/ieee13_measured --solver opendss
+```
+
+省略 `--solver` 时仍使用 OpenDSS。FEM 不需要 `network.dss`；OpenDSS 需要它。依赖表同时包含两种后端的依赖，FEM 核心使用 NumPy/SciPy，时序框架使用 pandas。
+
+## 2. 输入、输出与代码位置
+
+输入由 `NetworkModel` 和 `ProfileStore` 统一管理：
+
+| 输入 | 用途 |
+|---|---|
+| `network.json` | 母线相别、额定电压、线路矩阵、接线方式、变压器、源阻抗、调压器和电容器 |
+| `load_profiles.csv` | 每时刻每个负荷的 P/Q，正值表示消耗 |
+| `der_profiles/*.csv` | PV/风电/储能/EV 的 P/Q 和控制参数 |
+| 上一时刻 `PFState` | 电压初值与调压器档位，减少重复计算并保留控制记忆 |
+
+PV、风电和 BESS 的正 P 表示向网侧注入；EV 的正 P 表示消耗。BESS 负 P 表示充电。`ProfileStore` 先依据 SOC、功率和容量限制指令，求解后每个物理时间步只推进一次 SOC。Volt–Var 和调压内迭代不推进时间或 SOC。
+
+| 输出文件 | 含义 |
+|---|---|
+| `qsts_bus_voltages.csv` | 每个时间、母线、相的电压幅值 pu 和相角 |
+| `qsts_branch_results.csv` | 线路/开关/变压器/调压器的电流、首端 P/Q、负载率和档位 |
+| `qsts_system.csv` | 收敛、损耗、电源功率、DER 最终指令、SOC、控制/潮流迭代次数 |
+| `qsts_constraints.csv` | 电压、负序不平衡、热限值和反向潮流检查 |
+| `qsts_hosting_capacity_metrics.csv` | 约束余量指标；不是已经优化得到的 DER 最大接入容量 |
+| `fem_path_profile_last_step.csv` | 最后时刻每条路径的局部 x、节点电压和下游端口电流 |
+
+`qsts_system.csv` 新增 `max_kcl_residual_a` 与 `regulator_iterations`，分别是自由相节点的最大电流平衡残差和该步抽头调整轮数。`loss_kw/loss_kvar` 统计线路与变压器损耗，不把电容器无功注入当作损耗。沿用现有项目符号：`source_p_kw < 0` 表示电网向馈线供电。
+
+| 文件 | 职责 |
+|---|---|
+| `src/solvers/fem_elements.py` | 相/线电压连接矩阵、线路单元、变压器、开关、源阻抗 |
+| `src/solvers/fem_solver.py` | 全局组装、非线性迭代、控制、结果和路径输出 |
+| `src/profile_store.py`、`src/qsts.py` | 复用原项目的时序数据、SOC 与约束评估 |
+| `run.py` | 两种求解器共用的生产入口 |
+| `test/compare_solvers.py` | 完整时序对照和相同控制条件下的诊断 |
+| `test/test_fem_*.py` | 单位、物理关系、完整数据、命令行回归 |
+
+## 3. 算法的数学含义
+
+未知量为所有母线相节点的复电压 V，单位 V。当前两个算例各有 41 个相节点、17 个支路和 13 个 DER。缺相节点只建立实际存在的相；线路阻抗矩阵保留相间耦合。
+
+### 3.1 线路上的 P1 基函数
+
+对于长度 L、单位长度串联阻抗矩阵 z 的线路，采用
+
+\[
+V_h(x)=N_1(x)V_i+N_2(x)V_j,\qquad N_1=1-x/L,\quad N_2=x/L.
+\]
+
+串联电流满足 `I = -z⁻¹ dV/dx`。对弱式中的梯度项积分，得到
+
+\[
+K_e=\int_0^L B^Tz^{-1}B\,dx
+=\begin{bmatrix}Z_e^{-1}&-Z_e^{-1}\\-Z_e^{-1}&Z_e^{-1}\end{bmatrix},\qquad Z_e=zL.
+\]
+
+线路充电电容按 π 模型集中到两端，每端增加 `jωC_total/2`。这是分段线性串联单元加端点集总充电，不是连续电容项的高阶精确积分。英里、英尺、米和千米等长度统一转换后再计算阻抗、电容和路径 x。
+
+**在常系数、节点集中负荷的线路模型上，这个 P1 组装与相域节点导纳法等价。** 当前没有引入二维/三维场 PDE，也没有证据表明仅更换为有限元写法就能加速潮流。可扩展之处是线路弱式与设备端口模型的统一组织。
+
+### 3.2 交点条件和路径
+
+各单元在共同母线的同一相使用同一个电压自由度，所以电压连续直接成立；组装节点方程要求流入/流出电流与负荷、DER、电容器注入平衡，即 KCL。交点处各条线路的电流不要求相等，而要求有符号求和守恒。
+
+路径划分为“源端/交点到下一交点/末端”的最大链，避免重复计算重叠主干。三个单相调压器可共用一个物理连接，保留各自的电气矩阵。每条路径有独立的距离原点，但共享节点始终使用同一个复电压解。
+
+当前是全局稀疏方程联立求解，路径用于描述拓扑和导出分布，不是各条首尾路径独立求解后再拼接。变压器和调压器没有线路长度，在路径上表现为零长度器件和电压变换；不能跨变压器把两侧电压当作一段连续直线插值。
+
+### 3.3 变压器、调压器、源与电容器
+
+对每个两绕组变压器，用接线矩阵 C 把相节点电压映射为绕组电压：wye 为相对地电压，delta 为两相之差。再用绕组额定电压和抽头比归一化，构造
+
+\[
+B=[C_1/(V_{b1}t_1),\;-C_2/(V_{b2}t_2)],\qquad
+K_{tr}=\frac{S_{phase}}{r_{pu}+jx_{pu}}B^TB.
+\]
+
+这样包含铜损、漏抗、变比和 delta/wye 相移。当前支持两绕组、接地 wye、delta，以及默认 lag 接线约定；可选空载损耗、励磁支路和很小的 antifloat 支路。调压器作为抽头可变的单相变压器，抽头变化后重新组装/分解矩阵。
+
+源有两种形式：理想源使用固定电压边界；有源阻抗时由序阻抗构成相域矩阵，以 Norton 等效 `Y_source` 和 `Y_source E` 并入方程，源端母线电压也参与求解。现有 IEEE13 的 `mvasc3/mvasc1` 用于计算源阻抗，缺省 X/R 比采用 4、3，也可以在 JSON 中设置 `x1r1/x0r0` 或直接给出 `r1/x1/r0/x0`。
+
+电容器按恒导纳模型并入节点；它的实际无功随电压平方变化。闭合开关用 JSON 声明的有限阻抗模型，打开后断开该支路；造成孤岛时明确报错。
+
+### 3.4 负荷与 DER 电流
+
+先用接线矩阵得到每个端口电压 u，再按各端口分配的复功率 s 计算电流注入：
+
+| 模型 | 注入电流表达式 |
+|---|---|
+| 恒功率，model=1 | `conj(s/u)` |
+| 恒阻抗，model=2 | `conj(s) × u / U_nom²` |
+| 恒电流幅值及功率因数，model=5 | `conj(s)/U_nom × u/abs(u)` |
+
+负荷 s 为负，发电 s 为正。三角形负荷在相间求端口电流，再用 `Cᵀ` 分配到节点，不把它等价分摊为三个接地负荷。
+
+model 1/5 超出允许电压范围后按连续的恒阻抗延拓处理，避免在异常电压下无限增流。默认负荷/EV 范围为 0.95–1.05 pu，发电/储能为 0.9–1.1 pu；可通过设备 `vmin_pu/vmax_pu` 配置。低于 0.1 pu 或不收敛时终止并报错，不输出伪收敛结果。BESS 空闲时额外消耗 `idling_kw_pct` 的额定有功，缺省为 1%；该项是 AC 电气模型，不另行推进 SOC。
+
+### 3.5 稀疏电流注入迭代
+
+将全局矩阵分为自由节点 f 与固定节点 s，每次迭代：
+
+\[
+Y_{ff}V_f^{k+1}=I_f(V^k)+I_{source,f}-Y_{fs}V_s.
+\]
+
+`build()` 时组装矩阵，用额定相电压做尺度平衡并执行稀疏 LU 分解。只改变负荷或 DER P/Q 时复用分解；抽头变化时重建。第一次使用无负荷网络解初始化（自然包含变压器相移），后续使用上一时间步电压热启动。
+
+默认电压变化门限为 `1e-9 pu`，最多 200 次。收敛后再次检查非线性 KCL 残差；容许值是 `1e-5 A + 1e-7 × max(1 A, max device injection)`，防止仅靠电压变化判断成功。输出同时保留实际最大残差。
+
+### 3.6 自动调压、Volt–Var 与时间推进
+
+每个时间步的流程是：读取负荷与经 SOC 限制后的 DER 指令 → 求电压 → 检查抽头 → 检查 Volt–Var → 重复至稳定 → 保存结果 → 推进一次 SOC。
+
+单相调压器测量补偿电压
+
+\[
+V_{comp}=V_2/PT-(R+jX)I_{out}/CT.
+\]
+
+将其幅值与设定值 `vreg_v` 比较，超出 `band_v/2` 就按方向移动一档并重算；在死区内或档位上限/下限则不再改变。默认最多 100 轮抽头调整。这里实现的是稳态死区控制，不模拟机械动作时延、事件队列和反向功率调压模式。
+
+Volt–Var 使用现有 `DERCommand.adjusted_q()` 的限幅下垂规则，按照 `SolverContext` 的松弛系数与容差迭代。最终 P/Q 返回 `PFResult.final_der_commands`，电压和档位写入下一步状态，供原有 QSTS 继续运行。
+
+## 4. 对照和回归测试
+
+```powershell
+python -m unittest discover -s test -v
+python -m test.compare_solvers --output output/fem_comparison
+# 也可只比较一个算例
+python -m test.compare_solvers --case ieee13_measured --output output/fem_comparison
+```
+
+比较器生成逐相电压、逐支路电流/档位、系统指标和相同控制诊断 CSV，以及包含输入 SHA-256、依赖版本、本机计时的 JSON。比较前检查时间、母线、相、支路完整匹配，避免少算节点得到较小误差。两个运行各自新建 `ProfileStore`，避免共享已经推进过的 SOC。
+
+测试分两层：
+
+1. **完整自动控制**：两种生产后端各自运行全时段，包括自动调压和 Volt–Var，考察最终工作状态是否接近。OpenDSS 的输入 DSS 脚本包含初始 Solve，且其控制器有自身的步进/队列实现；FEM 从 JSON 初始档位出发逐档调节。死区内可以存在多个稳定档位，因此这层差异不等于线性方程求解精度。
+2. **相同控制诊断**：固定成 OpenDSS 每时刻的最终抽头和 DER P/Q，再让 FEM 独立求解。这里故意共享控制输入以隔离电气模型/数值差异，但不共享参考电压和导纳。此设置仅用于测试，不是 `run.py --solver fem` 的运行方式。
+
+工程回归门限为：相同控制最大复电压差 < `3e-4 pu`、支路最大电流幅值差 < `0.6 A`、损耗差 < `0.2 kW`；自动控制最大幅值差 < `0.02 pu`、抽头最多差两档。这些门限只适用于本次两个算例，不构成任意网络上的误差保证。具体实测值和解读见 [验证结果](fem_validation.md)。
+
+## 5. 适用边界
+
+本版本已验证两个完整 IEEE13 DER 时序算例和一个小线路网络。支持径向物理拓扑、缺相和相间互感、线路 π 模型、两绕组变压器、单相二次侧调压、固定电容器、model 1/2/5 的 wye/delta 负荷及上述 DER。
+
+尚未覆盖任意 OpenDSS 元件语义：显式中性线/非接地中性点、三绕组、任意相移接线组、自动投切电容器、拓扑重构和网状路径、饱和/故障/动态暂态、逆变器完整限流及储能内部损耗/状态机。固定点法在重载、电压崩溃附近不保证收敛。调压逻辑也不是 OpenDSS 控制队列的逐条复刻。
+
+目前成果是一个原生、可复现、能运行完整现有数据的研究求解器；不能据此声称全面替代 OpenDSS 或计算速度更快。扩展至分布式功率密度、细网格/高阶基函数之前，应先定义连续模型并做网格收敛与基准对照。

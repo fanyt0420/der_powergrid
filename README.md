@@ -473,9 +473,18 @@ PFResult(
 
 ### 有限元后端与 IEEE 13 验证
 
-`run.py --data-dir <算例目录> --solver fem` 选择 `FiniteElementPFSolver`，结果默认写入 `output/<算例名>_fem/`，另外输出最后一个时间步的 `fem_path_profile_last_step.csv`。求解器把径向网络划成不重叠的源端/交点到交点/末端路径；交点共享电压未知量，全局节点方程保证电流守恒。当前这个 QSTS 后端只接受理想电源、无并联器件的线路网络和 wye 负荷/PV/风机/EV；对变压器、调压器、delta、储能和线路电容会明确报错。因此仓库自带的 `ieee13_measured` 与 `ieee13_unbalanced_der` 暂时不能直接用 `--solver fem` 运行。
+`FiniteElementPFSolver` 已支持仓库两个完整 DER 时序算例，统一通过原有 `run.py` 选择：
 
-完整 IEEE 13 节点的固定抽头**单时刻**验证可运行 `python run_ieee13_fem.py`。独立的 `DssGraphFEMSolver` 从标准 DSS 文件读取缺相线路、变压器、调压器和电容器的线性导纳，以 650 节点电压为边界，自行迭代求解负荷电流与下游电压。它仍依赖 OpenDSS 解析复杂元件和生成参考结果，尚未连接到 DER 时序 QSTS。输入、误差和适用范围见 `docs/IEEE13图网络有限元验证.md`。
+```powershell
+python run.py --data-dir data/ieee13_unbalanced_der --solver fem
+python run.py --data-dir data/ieee13_measured --solver fem
+python -m unittest discover -s test -v
+python -m test.compare_solvers --output output/fem_comparison
+```
+
+结果默认写入 `output/<算例名>_fem/`。FEM 直接从 JSON 组装线路、变压器、调压器、电容器和源模型，自己求解三相电压、负荷/DER 电流与控制，不使用 DSS 文件或 OpenDSS 电压。包含 24/96 个时间步、储能 SOC 和 Volt–Var；默认 OpenDSS 后端的用法不变。旧的单算例 `run_ieee13_fem.py` 已移除。
+
+路径交点共享电压，节点方程满足 KCL；线路 P1 组装在本模型下等价于相域节点导纳法，尚无加速结论。自动调压可能收敛到不同的死区内档位，比较器同时提供完整控制和固定相同控制两组结果。详细数学算法、设备假设、使用方法见 [doc/fem_solver.md](doc/fem_solver.md)，实测精度与限制见 [doc/fem_validation.md](doc/fem_validation.md)。测试统一放在 `test/`。
 
 ## 组织新算例与设备模型
 
