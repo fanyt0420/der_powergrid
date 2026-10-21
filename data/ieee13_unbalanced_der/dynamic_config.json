@@ -1,0 +1,69 @@
+{
+  "dt_s": 0.005,
+  "t_end_s": 2.0,
+  "tolerance": 1e-07,
+  "max_newton_iterations": 20,
+  "min_dt_s": 7.8125e-05,
+  "system_base_va": 2000000.0,
+  "switch_impedance_multiplier": 0.001,
+  "source_boundary": "frozen_qsts_terminal",
+  "dynamic_devices": [
+    {
+      "device_id": "BESS_671_B",
+      "model": "inertia",
+      "s_ref_va": 100000,
+      "H_s": 2.0,
+      "D": 1.0,
+      "k_pf": 0.25,
+      "n_q": 0.05,
+      "tau_e_s": 0.05,
+      "tau_p_s": 0.04,
+      "tau_q_s": 0.04,
+      "r_c_pu": 0.01,
+      "x_c_pu": 0.073,
+      "current_limit_pu": 1.2
+    },
+    {
+      "device_id": "PV_671_A",
+      "model": "gfl",
+      "s_ref_va": 80000,
+      "tau_p_s": 0.04,
+      "tau_q_s": 0.04,
+      "current_limit_pu": 1.2,
+      "tau_i_s": 0.02,
+      "pll_kp_hz": 5.0,
+      "pll_ki_hz_per_s": 50.0
+    },
+    {
+      "device_id": "Wind_680_ABC",
+      "model": "gfl",
+      "s_ref_va": 120000,
+      "tau_p_s": 0.05,
+      "tau_q_s": 0.05,
+      "current_limit_pu": 1.15,
+      "tau_i_s": 0.02,
+      "pll_kp_hz": 5.0,
+      "pll_ki_hz_per_s": 50.0
+    }
+  ],
+  "scenarios": {
+    "flat_run": [],
+    "load_step": [
+      {
+        "time_s": 1.0,
+        "type": "load_scale",
+        "device_id": "671",
+        "p_multiplier": 1.1,
+        "q_multiplier": 1.1
+      }
+    ],
+    "pv_trip": [
+      {
+        "time_s": 1.0,
+        "type": "der_trip",
+        "device_id": "PV_671_A"
+      }
+    ]
+  },
+  "description": "Mixed GFM/GFL research configuration; 1e-7 residual tolerance for preliminary runs, not precision acceptance"
+}
