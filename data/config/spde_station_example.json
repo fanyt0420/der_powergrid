@@ -1,0 +1,17 @@
+{
+  "status": "assumed example layout and equipment; not surveyed IEEE13 locations",
+  "coordinates_are_assumed": true,
+  "equipment_parameters_are_assumed": true,
+  "coordinate_origin": {"latitude": 50.75, "longitude": 6.25},
+  "stations": [
+    {"site_id": "SITE_PV_01", "device_id": "PV_SITE_01", "kind": "pv", "template_id": "PV_632_A", "east_m": -3000, "north_m": -2500, "p_rated_kw": 70, "surface_tilt": 20, "surface_azimuth": 150},
+    {"site_id": "SITE_PV_02", "device_id": "PV_SITE_02", "kind": "pv", "template_id": "PV_670_C", "east_m": -2500, "north_m": -2000, "p_rated_kw": 50, "surface_tilt": 25, "surface_azimuth": 170},
+    {"site_id": "SITE_PV_03", "device_id": "PV_SITE_03", "kind": "pv", "template_id": "PV_671_A", "east_m": -1000, "north_m": 1200, "p_rated_kw": 80, "surface_tilt": 30, "surface_azimuth": 180},
+    {"site_id": "SITE_PV_04", "device_id": "PV_SITE_04", "kind": "pv", "template_id": "PV_675_A", "east_m": 1200, "north_m": 800, "p_rated_kw": 100, "surface_tilt": 35, "surface_azimuth": 200},
+    {"site_id": "SITE_PV_05", "device_id": "PV_SITE_05", "kind": "pv", "template_id": "PV_675_C", "east_m": 2500, "north_m": -1500, "p_rated_kw": 70, "surface_tilt": 30, "surface_azimuth": 220},
+    {"site_id": "SITE_PV_06", "device_id": "PV_SITE_06", "kind": "pv", "template_id": "PV_634_ABC", "east_m": 3200, "north_m": 2400, "p_rated_kw": 180, "surface_tilt": 15, "surface_azimuth": 180},
+    {"site_id": "SITE_WIND_01", "device_id": "Wind_SITE_01", "kind": "wind", "template_id": "Wind_680_ABC", "bus": "680", "east_m": -2800, "north_m": 2200, "p_rated_kw": 40, "hub_height_m": 80, "shear_exponent": 0.14, "cut_in_m_s": 3, "rated_speed_m_s": 11, "cut_out_m_s": 25},
+    {"site_id": "SITE_WIND_02", "device_id": "Wind_SITE_02", "kind": "wind", "template_id": "Wind_680_ABC", "bus": "671", "east_m": 800, "north_m": -2500, "p_rated_kw": 40, "hub_height_m": 100, "shear_exponent": 0.14, "cut_in_m_s": 3, "rated_speed_m_s": 12, "cut_out_m_s": 25},
+    {"site_id": "SITE_WIND_03", "device_id": "Wind_SITE_03", "kind": "wind", "template_id": "Wind_680_ABC", "bus": "632", "east_m": 3000, "north_m": 500, "p_rated_kw": 40, "hub_height_m": 120, "shear_exponent": 0.14, "cut_in_m_s": 3.5, "rated_speed_m_s": 12, "cut_out_m_s": 24}
+  ]
+}

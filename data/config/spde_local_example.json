@@ -1,0 +1,21 @@
+{
+  "status": "assumed hourly local residual SPDE; sensitivity experiment, not fine-scale calibration",
+  "parameters_are_assumed": true,
+  "half_width_m": 6000,
+  "grid_points": 13,
+  "noise_lengths_m": [1000, 2000, 4000],
+  "default_length_m": 2000,
+  "strength_multipliers": [0.5, 1.0, 1.5],
+  "fields": [
+    {"name": "solar_logit", "station_rms_std": 0.35, "velocity_x_m_s": 0, "velocity_y_m_s": 0, "diffusivity_m2_s": 100, "decay_per_s": 0.0002777777777777778},
+    {"name": "wind_u_100m", "station_rms_std": 0.75, "velocity_x_m_s": 0, "velocity_y_m_s": 0, "diffusivity_m2_s": 150, "decay_per_s": 0.0001388888888888889},
+    {"name": "wind_v_100m", "station_rms_std": 0.75, "velocity_x_m_s": 0, "velocity_y_m_s": 0, "diffusivity_m2_s": 150, "decay_per_s": 0.0001388888888888889},
+    {"name": "temp_air", "station_rms_std": 0.25, "velocity_x_m_s": 0, "velocity_y_m_s": 0, "diffusivity_m2_s": 200, "decay_per_s": 0.000046296296296296294}
+  ],
+  "driving_correlation": [[1,0,0,0], [0,1,0,0], [0,0,1,0], [0,0,0,1]],
+  "pv_temperature_model": "close_mount_glass_glass",
+  "pv_dc_ac_ratio": 1.15,
+  "pv_inverter_efficiency": 0.96,
+  "pv_gamma_pdc": -0.004,
+  "pv_wind_10m_shear_exponent": 0.14
+}
